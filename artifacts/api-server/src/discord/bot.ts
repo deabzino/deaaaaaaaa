@@ -19,6 +19,7 @@ import {
   flushVoiceLogs,
   markVoiceChangeByBot,
   getLogSettings,
+  logChannelId,
   ignoreLogTarget,
   logCommand,
   logCommandError,
@@ -906,6 +907,16 @@ async function handleSlashCommand(
     const subcommand = interaction.options.getSubcommand();
     if (subcommand === "setchannel") {
       const channel = interaction.options.getChannel("channel", true);
+      const destination = await interaction.guild.channels.fetch(channel.id).catch(() => null);
+      const bot = interaction.guild.members.me;
+      if (!destination?.isSendable() || !bot || !destination.permissionsFor(bot)?.has([
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.EmbedLinks,
+        destination.isThread() ? PermissionFlagsBits.SendMessagesInThreads : PermissionFlagsBits.SendMessages,
+      ])) {
+        await interaction.reply({ content: "Choose a channel where I can view, send messages and embed links.", ephemeral: true });
+        return;
+      }
       await configureLogs(interaction.guild.id, { channelId: channel.id });
       await interaction.reply(`Server logs will be sent to <#${channel.id}>.`);
     } else if (subcommand === "toggle") {
@@ -913,7 +924,7 @@ async function handleSlashCommand(
       await interaction.reply(`Logging category toggled. Enabled: ${Object.entries(settings.enabled).filter(([, enabled]) => enabled).map(([category]) => category).join(", ") || "none"}.`);
     } else if (subcommand === "status") {
       const settings = await getLogSettings(interaction.guild.id);
-      await interaction.reply({ content: `Channel: ${settings.channelId ? `<#${settings.channelId}>` : `default (${process.env.LOG_CHANNEL_ID ?? "1183841843100795030"})`}\nEnabled: ${Object.entries(settings.enabled).filter(([, enabled]) => enabled).map(([category]) => category).join(", ") || "none"}\nIgnored channels: ${settings.ignoredChannels.length}\nIgnored roles: ${settings.ignoredRoles.length}\nIgnored users: ${settings.ignoredUsers.length}`, ephemeral: true });
+      await interaction.reply({ content: `Channel: ${"<#" + logChannelId(settings) + ">"}\nEnabled: ${Object.entries(settings.enabled).filter(([, enabled]) => enabled).map(([category]) => category).join(", ") || "none"}\nIgnored channels: ${settings.ignoredChannels.length}\nIgnored roles: ${settings.ignoredRoles.length}\nIgnored users: ${settings.ignoredUsers.length}`, ephemeral: true });
     } else {
       const settings = await ignoreLogTarget(interaction.guild.id, interaction.options.getString("type", true) as "channel" | "role" | "user", interaction.options.getString("id", true));
       await interaction.reply(`Ignore list updated. Channels: ${settings.ignoredChannels.length}, roles: ${settings.ignoredRoles.length}, users: ${settings.ignoredUsers.length}.`);

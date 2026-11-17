@@ -52,7 +52,7 @@ export function describeVoiceChanges(oldState: any, newState: any): VoiceLogChan
   const newChannel = newState.channel;
   const oldId = oldState.channelId;
   const newId = newState.channelId;
-  const label = (channel: any, id?: string | null) => channel?.name ?? (id && /^[0-9]{17,20}$/.test(id) ? id : "voice channel");
+  const label = (channel: any, id?: string | null) => channel?.name ?? (id && /^[0-9]{17,20}$/.test(id) ? "<#" + id + ">" : "Unknown voice channel");
   const add = (title: string, text: string, color: number) => changes.push({ title, text, color });
   if (!oldId && newId) add("Joined voice channel", `Joined 🔊 ${label(newChannel, newId)}`, 0x57f287);
   else if (oldId && !newId) add("Left voice channel", `Left: 🔊 ${label(oldChannel, oldId)}`, 0xed4245);
@@ -60,12 +60,12 @@ export function describeVoiceChanges(oldState: any, newState: any): VoiceLogChan
   // Discord may hydrate a joining member from a cached state; only compare flags
   // when both states describe the same actual voice session.
   if (oldId && oldId === newId) {
-    if (oldState.serverMute !== newState.serverMute) add(newState.serverMute ? "Server muted" : "Server unmuted", newState.serverMute ? "Was server-muted" : "Was server-unmuted", 0xf2c879);
-    if (oldState.serverDeaf !== newState.serverDeaf) add(newState.serverDeaf ? "Server deafened" : "Server undeafened", newState.serverDeaf ? "Was server-deafened" : "Was server-undeafened", 0xf2c879);
-    if (oldState.selfMute !== newState.selfMute) add(newState.selfMute ? "Muted themselves" : "Unmuted themselves", newState.selfMute ? "Muted themselves" : "Unmuted themselves", 0xf2c879);
-    if (oldState.selfDeaf !== newState.selfDeaf) add(newState.selfDeaf ? "Deafened themselves" : "Undeafened themselves", newState.selfDeaf ? "Deafened themselves" : "Undeafened themselves", 0xf2c879);
-    if (oldState.streaming !== newState.streaming) add(newState.streaming ? "Started streaming" : "Stopped streaming", newState.streaming ? "Started streaming" : "Stopped streaming", 0x5865f2);
-    if (oldState.selfVideo !== newState.selfVideo) add(newState.selfVideo ? "Turned camera on" : "Turned camera off", newState.selfVideo ? "Turned camera on" : "Turned camera off", 0x5865f2);
+    if (typeof oldState.serverMute === "boolean" && typeof newState.serverMute === "boolean" && oldState.serverMute !== newState.serverMute) add(newState.serverMute ? "Server muted" : "Server unmuted", newState.serverMute ? "Was server-muted" : "Was server-unmuted", 0xf2c879);
+    if (typeof oldState.serverDeaf === "boolean" && typeof newState.serverDeaf === "boolean" && oldState.serverDeaf !== newState.serverDeaf) add(newState.serverDeaf ? "Server deafened" : "Server undeafened", newState.serverDeaf ? "Was server-deafened" : "Was server-undeafened", 0xf2c879);
+    if (typeof oldState.selfMute === "boolean" && typeof newState.selfMute === "boolean" && oldState.selfMute !== newState.selfMute) add(newState.selfMute ? "Muted themselves" : "Unmuted themselves", newState.selfMute ? "Muted themselves" : "Unmuted themselves", 0xf2c879);
+    if (typeof oldState.selfDeaf === "boolean" && typeof newState.selfDeaf === "boolean" && oldState.selfDeaf !== newState.selfDeaf) add(newState.selfDeaf ? "Deafened themselves" : "Undeafened themselves", newState.selfDeaf ? "Deafened themselves" : "Undeafened themselves", 0xf2c879);
+    if (typeof oldState.streaming === "boolean" && typeof newState.streaming === "boolean" && oldState.streaming !== newState.streaming) add(newState.streaming ? "Started streaming" : "Stopped streaming", newState.streaming ? "Started streaming" : "Stopped streaming", 0x5865f2);
+    if (typeof oldState.selfVideo === "boolean" && typeof newState.selfVideo === "boolean" && oldState.selfVideo !== newState.selfVideo) add(newState.selfVideo ? "Turned camera on" : "Turned camera off", newState.selfVideo ? "Turned camera on" : "Turned camera off", 0x5865f2);
   }
   return changes;
 }
@@ -84,9 +84,10 @@ export function summarizeVoiceChanges(changes: VoiceLogChange[]) {
     if (from === to) return { title: `Reconnected to ${to.replace(/^🔊 /, "")}`, color: 0x57f287, changes: changes.filter((change) => change !== left && change !== joined).map((change) => change.text) };
     return { title: `Moved from ${from.replace(/^🔊 /, "")} to ${to.replace(/^🔊 /, "")}`, color: 0x5865f2, changes: changes.filter((change) => change !== left && change !== joined).map((change) => change.text) };
   }
+  const flags = changes.filter((change) => priority(change.title) !== 0).map((change) => change.text);
   if (main.title === "Switched voice channel") {
     const match = main.text.match(/^From: (.*?) → To: (.*)$/);
-    if (match) return { title: `Moved from ${match[1]!.replace(/^🔊 /, "")} to ${match[2]!.replace(/^🔊 /, "")}`, color: main.color, changes: [] };
+    if (match) return { title: `Moved from ${match[1]!.replace(/^🔊 /, "")} to ${match[2]!.replace(/^🔊 /, "")}`, color: main.color, changes: flags };
   }
-  return { title: main.title, color: main.color, changes: changes.filter((change) => change.title !== "Joined voice channel" && change.title !== "Left voice channel" && change.title !== "Switched voice channel").map((change) => change.text) };
+  return { title: main.title, color: main.color, changes: flags };
 }

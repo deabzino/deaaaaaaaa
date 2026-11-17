@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commandLogDetails, escapeMarkdown, formatRoleList, formatUser, formatUserLabel, inlineCode, optionalActorField, sanitizeLogText, deletedByLabel } from "./logFormatting.ts";
+import { PermissionFlagsBits, PermissionsBitField } from "discord.js";
+import { channelPermissionChanges, truncate, commandLogDetails, escapeMarkdown, formatRoleList, formatUser, formatUserLabel, inlineCode, optionalActorField, sanitizeLogText, deletedByLabel } from "./logFormatting.ts";
 import { describeVoiceChanges, summarizeVoiceChanges, VoiceLogBatcher } from "./voiceLogBatcher.ts";
 
 const GUILD = "1014163878478884997";
@@ -86,19 +87,9 @@ test("voice bursts for one member are combined in order and flush at shutdown", 
 });
 
 test("message deletion wording handles audit matches, users and bots", () => {
-  assert.equal(
-    deletedByLabel(USER, "keruptedd", null, null, "available"),
-    "Probably themselves",
-  );
-  assert.equal(
-    deletedByLabel(USER, "keruptedd", "123456789012345678", "moderator", "available"),
-    "<@123456789012345678> (moderator)",
-  );
-  assert.equal(
-    deletedByLabel(USER, "keruptedd", null, null, "permission_missing"),
-    "Probably themselves",
-  );
-  assert.equal(deletedByLabel(null, null, null, null, "unavailable"), "");
+  assert.equal(deletedByLabel(true, ""), "Unknown (likely deleted by the author)");
+  assert.equal(deletedByLabel(true, "<@123456789012345678> (moderator)"), "<@123456789012345678> (moderator)");
+  assert.equal(deletedByLabel(false, ""), "Unknown");
 });
 
 test("message content markdown and attachment filenames are escaped", () => {
@@ -134,7 +125,7 @@ test("command details include prefix and channel mention without empty options",
 
 test("role lists are consistently sorted, markdown escaped, and capped", () => {
   const names = ["DJ", "Members", "'", "Role_3", "Role_4", "Role_5", "Role_6", "Role_7", "Role_8", "Role_9", "Role_10", "Role_11"];
-  assert.equal(formatRoleList(names), "', DJ, Members, Role\\_10, Role\\_11, Role\\_3, Role\\_4, Role\\_5, Role\\_6, Role\\_7 +2 more");
+  assert.equal(formatRoleList(names), "', DJ, Members, Role\\_10, Role\\_11, Role\\_3, Role\\_4, Role\\_5, Role\\_6, Role\\_7 ...and 2 more");
 });
 
 test("clean member, channel and other-event fields keep IDs in the footer only", () => {
@@ -157,4 +148,56 @@ test("marked IDs do not get duplicated in the footer and channel mentions surviv
   const value = sanitizeLogText(`@Arian (keruptedd)\u2063{User:${USER}}\u2063 <#1014164674679427164>`, GUILD, ids);
   assert.equal(value, "@Arian (keruptedd) <#1014164674679427164>");
   assert.deepEqual([...ids.keys()], [`User ID ${USER}`]);
+});
+
+test("overwrite diffs match targets by ID and report allow, deny, neutral and removal", () => {
+  const { ViewChannel, SendMessages, ManageMessages } = PermissionFlagsBits;
+  const overwrite = (id, allow = 0n, deny = 0n) => [id, {
+    id, allow: new PermissionsBitField(allow), deny: new PermissionsBitField(deny),
+  }];
+  const before = new Map([
+    overwrite("everyone", SendMessages),
+    overwrite("members"),
+    overwrite("muted", 0n, SendMessages),
+  ]);
+  const reordered = new Map([...before].reverse());
+  const label = ({ id }) => "@" + id;
+  assert.deepEqual(channelPermissionChanges(before, reordered, label), []);
+  const after = new Map([
+    overwrite("members", ViewChannel, SendMessages),
+    overwrite("mods", ManageMessages),
+    overwrite("everyone"),
+  ]);
+  assert.deepEqual(channelPermissionChanges(reordered, after, label), [
+    "- @everyone: Send Messages reset to neutral",
+    "- @members: allowed View Channel, denied Send Messages",
+    "- @mods: new overwrite added: allowed Manage Messages",
+    "- @muted: removed overwrite (no custom permissions anymore)",
+  ]);
+});
+
+test("embed truncation reports omitted lines or characters and stays inside the limit", () => {
+  const lines = Array.from({ length: 40 }, (_, index) => (index + 1) + " " + "x".repeat(50));
+  const field = truncate(lines.join("\n"), 1024);
+  const rendered = field.split("\n");
+  assert.ok(field.length <= 1024);
+  assert.equal(rendered.at(-1), "...and " + (lines.length - rendered.length + 1) + " more");
+  const description = truncate("😀".repeat(3000), 4096);
+  assert.ok(description.length <= 4096);
+  assert.match(description, /\.\.\.and \d+ more$/);
+  assert.doesNotMatch(description, /[\uD800-\uDBFF]\./);
+});
+
+test("unknown voice flags produce no change and switching retains other changes in the batch", () => {
+  assert.deepEqual(describeVoiceChanges(fixture("a", { selfMute: null }), fixture("a")), []);
+  const move = describeVoiceChanges(fixture("a"), fixture("b"));
+  const mute = describeVoiceChanges(fixture("b"), fixture("b", { selfMute: true }));
+  assert.deepEqual(summarizeVoiceChanges([...move, ...mute]).changes, ["Muted themselves"]);
+});
+
+test("log embeds preserve multiline user text and collect mention IDs", () => {
+  const ids = new Map();
+  const text = "true\nContent unavailable\n<@" + USER + ">";
+  assert.equal(sanitizeLogText(text, GUILD, ids, true), text);
+  assert.deepEqual([...ids.keys()], ["User ID " + USER]);
 });

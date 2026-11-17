@@ -1,17 +1,33 @@
 import {
   AuditLogEvent,
   EmbedBuilder,
+  ChannelType,
+  GuildVerificationLevel,
+  GuildExplicitContentFilter,
+  GuildDefaultMessageNotifications,
+  GuildScheduledEventStatus,
+  GuildScheduledEventEntityType,
+  AutoModerationRuleEventType,
+  AutoModerationRuleTriggerType,
+  StickerType,
+  AutoModerationActionType,
+  OverwriteType,
+  type GuildChannel,
+  type PermissionOverwrites,
+  type PartialMessage,
+  type User,
   Events,
   PermissionFlagsBits,
   type Client,
   type Guild,
   type GuildMember,
+  type PartialGuildMember,
+  type PartialUser,
   type Message,
-  type TextBasedChannel,
 } from "discord.js";
 import { prisma } from "../lib/prisma";
-import { describeVoiceChanges, summarizeVoiceChanges, VoiceLogBatcher } from "./voiceLogBatcher";
-import { commandLogDetails, deletedByLabel, escapeMarkdown, formatRoleList, formatUser, inlineCode, optionalActorField, sanitizeLogText } from "./logFormatting";
+import { describeVoiceChanges, summarizeVoiceChanges, VoiceLogBatcher, type VoiceLogChange } from "./voiceLogBatcher";
+import { channelPermissionChanges, humanize, permissionNames, truncate, commandLogDetails, deletedByLabel, escapeMarkdown, formatRoleList, formatUser, inlineCode, optionalActorField, sanitizeLogText } from "./logFormatting";
 
 export type LogCategory =
   | "messages"
@@ -42,18 +58,21 @@ let draining = false;
 const settingsCache = new Map<string, LogSettings>();
 type MessageSnapshot = {
   id: string;
-  guildId: string;
   channelId: string;
   authorId: string;
   authorTag: string;
   content: string;
   attachments: string;
+  attachmentIds: string;
+  stickers: string;
+  stickerIds: string;
+  embeds: string;
+  avatarUrl: string;
   imageUrl: string | null;
   authorBot: boolean;
 };
 const snapshots = new Map<string, MessageSnapshot>();
 type InviteSnapshot = Map<string, { uses: number; inviter: string }>;
-type InviteAttribution = { detail: string; actor: string };
 const inviteSnapshots = new Map<string, InviteSnapshot>();
 const inviteFetchQueues = new Map<string, Promise<void>>();
 
@@ -65,20 +84,15 @@ const defaultSettings = (): LogSettings => ({
   ignoredUsers: [],
 });
 
-function truncate(value: unknown, max: number): string {
-  const text = String(value ?? "");
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
-}
-
 function idText(value: string | null | undefined): string {
-  if (!value) return "channel";
+  if (!value) return "Unknown";
   return `<#${value}>${idMarker("Channel", value)}`;
 }
 
 function userText(id: string, name?: string | null): string {
-  const username = globalClient?.users.cache.get(id)?.username ?? name?.split("#")[0] ?? null;
-  const displayName = globalClient?.guilds.cache.find((guild) => guild.members.cache.has(id))?.members.cache.get(id)?.displayName;
-  return `${formatUser(id, username, displayName)}${idMarker("User", id)}`;
+  if (!id) return "Unknown";
+  const username = name?.split("#")[0] ?? globalClient?.users.cache.get(id)?.username ?? null;
+  return `${formatUser(id, username)}${idMarker("User", id)}`;
 }
 
 function idMarker(kind: string, id: string): string { return `\u2063{${kind}:${id}}\u2063`; }
@@ -90,26 +104,48 @@ function imageUrlFromMessage(message: Message): string | null {
   )?.url ?? null;
 }
 
-function snapshotMessage(message: Message): MessageSnapshot | null {
-  if (!message.guild) return null;
+function validMediaUrl(value?: string | null): value is string {
+  if (!value) return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function avatarUrl(user: User): string {
+  const url = user.displayAvatarURL({ extension: "png", size: 128 });
+  return validMediaUrl(url) ? url : user.defaultAvatarURL;
+}
+
+function snapshotMessage(message: Message | PartialMessage): MessageSnapshot | undefined {
+  if (message.partial || !message.guild || !message.author) return;
   return {
     id: message.id,
-    guildId: message.guild.id,
     channelId: message.channelId,
-    authorId: message.author?.id ?? "member",
-    authorTag: message.author?.tag ?? "member",
-    authorBot: message.author?.bot ?? false,
-    content: message.content || "No text content",
-    attachments: [...message.attachments.values()]
-      .map((attachment) => attachment.name ?? "Attachment")
-      .join("\n") || "No attachments",
+    authorId: message.author.id,
+    authorTag: message.author.tag,
+    authorBot: message.author.bot,
+    content: message.content,
+    attachments: message.attachments.map((attachment) =>
+      inlineCode(attachment.name ?? "Attachment") + " (" + (attachment.contentType ?? "Unknown type") + ")",
+    ).join("\\n"),
+    attachmentIds: [...message.attachments.keys()].sort().join(","),
+    stickers: message.stickers.map((sticker) => escapeMarkdown(sticker.name)).join("\\n"),
+    stickerIds: [...message.stickers.keys()].sort().join(","),
+    embeds: message.embeds.map((item) => escapeMarkdown(item.title ?? item.provider?.name ?? item.data.type ?? "Embed")).join("\\n"),
     imageUrl: imageUrlFromMessage(message),
+    avatarUrl: avatarUrl(message.author),
   };
 }
 
-function rememberMessage(message: Message): void {
-  const snapshot = snapshotMessage(message);
-  if (snapshot) snapshots.set(message.id, snapshot);
+function rememberMessage(snapshot: MessageSnapshot): void {
+  snapshots.delete(snapshot.id);
+  if (snapshots.size >= 5_000) {
+    const oldest = snapshots.keys().next().value;
+    if (oldest) snapshots.delete(oldest);
+  }
+  snapshots.set(snapshot.id, snapshot);
 }
 
 async function getSettings(guildId: string): Promise<LogSettings> {
@@ -169,7 +205,7 @@ export async function ignoreLogTarget(guildId: string, kind: "channel" | "role" 
 }
 
 let warnedMissingAuditPermission = false;
-async function auditActor(guild: Guild, type: AuditLogEvent, targetId?: string, retry = false): Promise<string> {
+async function auditActor(guild: Guild, type: AuditLogEvent, targetId: string | undefined, channelId?: string): Promise<string> {
   const me = guild.members.me;
   if (me && !me.permissions.has(PermissionFlagsBits.ViewAuditLog)) {
     if (!warnedMissingAuditPermission) {
@@ -179,13 +215,15 @@ async function auditActor(guild: Guild, type: AuditLogEvent, targetId?: string, 
     return "";
   }
   try {
-    for (let attempt = 0; attempt < (retry ? 2 : 1); attempt++) {
-      if (attempt) await new Promise((resolve) => setTimeout(resolve, 1_500));
-      const now = Date.now();
-      const logs = await guild.fetchAuditLogs({ type, limit: 6 });
-      const entry = logs.entries.find((item) => now - item.createdTimestamp >= 0 && now - item.createdTimestamp <= (retry ? 10_000 : 8_000) && (!targetId || (item.target as { id?: string } | null)?.id === targetId));
-      if (entry?.executor) return userText(entry.executor.id, entry.executor.tag);
-    }
+    if (!targetId) return "";
+    const logs = await guild.fetchAuditLogs({ type, limit: 5 });
+    const entry = logs.entries.find((item) => {
+      const age = Date.now() - item.createdTimestamp;
+      const extra = item.extra as { channel?: { id?: string } } | null;
+      return age >= 0 && age <= 5_000 && item.targetId === targetId &&
+        (!channelId || extra?.channel?.id === channelId);
+    });
+    if (entry?.executorId) return userText(entry.executorId, entry.executor?.username);
   } catch (error) {
     if ((error as { code?: number }).code === 50013 && !warnedMissingAuditPermission) {
       warnedMissingAuditPermission = true;
@@ -195,81 +233,60 @@ async function auditActor(guild: Guild, type: AuditLogEvent, targetId?: string, 
   return "";
 }
 
-type MessageDeleteActor =
-  | { id: string; username: string | null }
-  | { auditStatus: "available" | "permission_missing" | "unavailable" };
-
-async function messageDeleteActor(guild: Guild, authorId: string, channelId: string): Promise<MessageDeleteActor> {
-  const me = guild.members.me;
-  if (me && !me.permissions.has(PermissionFlagsBits.ViewAuditLog)) {
-    return { auditStatus: "permission_missing" };
-  }
-  try {
-    const logs = await guild.fetchAuditLogs({ type: AuditLogEvent.MessageDelete, limit: 10 });
-    const entry = logs.entries.find((item) => {
-      const extra = item.extra as { channel?: { id?: string } } | null;
-      return Date.now() - item.createdTimestamp < 15_000 &&
-        (item.target as { id?: string } | null)?.id === authorId &&
-        (!extra?.channel?.id || extra.channel.id === channelId);
-    });
-    if (entry?.executor) return { id: entry.executor.id, username: entry.executor.username };
-
-    // Purges are recorded as one bulk-delete audit entry, while Discord may
-    // still deliver individual MessageDelete gateway events for each message.
-    const bulkLogs = await guild.fetchAuditLogs({ type: AuditLogEvent.MessageBulkDelete, limit: 10 });
-    const bulkEntry = bulkLogs.entries.find((item) => {
-      const extra = item.extra as { channel?: { id?: string } } | null;
-      return Date.now() - item.createdTimestamp < 15_000 && extra?.channel?.id === channelId;
-    });
-    if (bulkEntry?.executor) return { id: bulkEntry.executor.id, username: bulkEntry.executor.username };
-  } catch (error) {
-    // The bot may not have View Audit Log permission, or Discord may not have
-    // made the entry available yet.
-    return { auditStatus: (error as { code?: number }).code === 50013 ? "permission_missing" : "unavailable" };
-  }
-  return { auditStatus: "available" };
-}
-
 function embed(guild: Guild, title: string, color: number, details: Array<[string, string]>, target?: string, imageUrl?: string | null, avatarUrl?: string | null): EmbedBuilder {
   const ids = new Map<string, string>();
-  const preservedMentions: string[] = [];
-  const clean = (value: string) => {
-    const prepared = value.replace(/\u2063\{MentionUser:([0-9]{17,20})\}\u2063/g, (_all, id: string) => {
-      const index = preservedMentions.push(`<@${id}>`) - 1;
-      return `\u2063{PreservedMention:${index}}\u2063`;
-    });
-    return sanitizeLogText(prepared
-    .replace(/<@!?([0-9]{17,20})>/g, (_all, id: string) => `${userText(id, globalClient?.users.cache.get(id)?.username)}`)
-    .replace(/<#([0-9]{17,20})>/g, (_all, id: string) => `<#${id}>`)
-    .replace(/<@&([0-9]{17,20})>/g, (_all, id: string) => `${guild.roles.cache.get(id)?.name ?? "role"}${idMarker("Role", id)}`), guild.id, ids)
-      .replace(/\u2063\{PreservedMention:([0-9]+)\}\u2063/g, (_all, index: string) => preservedMentions[Number(index)] ?? "");
-  };
-  if (target) ids.set(`Target ID ${target}`, "");
-  const fields = details.filter(([, value]) => value.trim().length > 0).map(([name, value]) => ({ name: truncate(clean(name), 256), value: truncate(clean(value) || "No additional details", 1024), inline: true }));
-  const footerIds = [...ids.keys()].join(" • ");
+  ids.set("Server ID " + guild.id, "");
+  if (target) ids.set("Target ID " + target, "");
+  const clean = (value: string) => sanitizeLogText(value, guild.id, ids, true);
+  const titleText = truncate(clean(title), 256);
+  const fields = details.filter(([, value]) => value.trim()).map(([name, value]) => ({
+    name: truncate(clean(name), 256),
+    value: clean(value) || "Unknown",
+    inline: name !== "Permissions" && !value.includes("\\n"),
+  }));
+  const footer = truncate([...ids.keys()].join(" • "), 1024);
+  let budget = 6000 - titleText.length - footer.length;
+  const boundedFields: typeof fields = [];
+  for (const field of fields.slice(0, 25)) {
+    const remaining = budget - field.name.length;
+    if (remaining < 60) break;
+    const value = truncate(field.value, Math.min(1024, remaining - 60));
+    boundedFields.push({ ...field, value });
+    budget -= field.name.length + value.length;
+  }
+  if (boundedFields.length < fields.length) {
+    if (boundedFields.length === 25) {
+      boundedFields.pop();
+    }
+    boundedFields.push({ name: "Details", value: "...and " + (fields.length - boundedFields.length) + " more", inline: false });
+  }
   const result = new EmbedBuilder()
-    .setTitle(title)
+    .setTitle(titleText)
     .setColor(color)
-    .addFields(fields)
-    .setFooter({ text: truncate(footerIds || "dea server log", 2048) })
+    .addFields(boundedFields)
+    .setFooter({ text: footer })
     .setTimestamp();
-  if (imageUrl) result.setImage(imageUrl);
-  if (avatarUrl) result.setThumbnail(avatarUrl);
+  if (validMediaUrl(imageUrl)) result.setImage(imageUrl);
+  if (validMediaUrl(avatarUrl)) result.setThumbnail(avatarUrl);
   return result;
 }
 
-function ignored(settings: LogSettings, category: LogCategory, message?: Message): boolean {
+export function logChannelId(settings: LogSettings): string {
+  return settings.channelId ?? process.env.LOG_CHANNEL_ID ?? DEFAULT_CHANNEL_ID;
+}
+
+function ignored(settings: LogSettings, category: LogCategory, message?: Message | PartialMessage): boolean {
   if (!settings.enabled[category]) return true;
   if (!message) return false;
-  const logChannelId = settings.channelId ?? process.env.LOG_CHANNEL_ID ?? DEFAULT_CHANNEL_ID;
-  if (message.channelId === logChannelId) return true;
-  if (message.author.bot && process.env.LOG_BOT_MESSAGES !== "true") return true;
+  if (message.channelId === logChannelId(settings)) return true;
+  if (message.author && message.author.id === globalClient?.user?.id) return true;
+  if (message.author?.bot && process.env.LOG_BOT_MESSAGES !== "true") return true;
   return settings.ignoredChannels.includes(message.channelId) ||
-    settings.ignoredUsers.includes(message.author.id) ||
+    (message.author ? settings.ignoredUsers.includes(message.author.id) : false) ||
     (message.member?.roles.cache.some((role) => settings.ignoredRoles.includes(role.id)) ?? false);
 }
 
-export async function enqueue(guild: Guild, category: LogCategory, item: EmbedBuilder, file?: QueueItem["file"], message?: Message): Promise<void> {
+export async function enqueue(guild: Guild, category: LogCategory, item: EmbedBuilder, file?: QueueItem["file"], message?: Message | PartialMessage): Promise<void> {
   await getSettings(guild.id).then(async (settings) => {
     if (ignored(settings, category, message)) return;
     queue.push({ guildId: guild.id, embed: item, file });
@@ -286,13 +303,32 @@ async function drain(): Promise<void> {
       const grouped = new Map<string, QueueItem[]>();
       for (const item of batch) grouped.set(item.guildId, [...(grouped.get(item.guildId) ?? []), item]);
       for (const [guildId, items] of grouped) {
-        const channelId = (await getSettings(guildId)).channelId ?? process.env.LOG_CHANNEL_ID ?? DEFAULT_CHANNEL_ID;
-        const channel = (await globalClient?.channels.fetch(channelId).catch(() => null)) as TextBasedChannel | null;
-        if (!channel || !("send" in channel)) continue;
         try {
-          await channel.send({ embeds: items.map((item) => item.embed), files: items.filter((item) => item.file).map((item) => item.file!), allowedMentions: { parse: [] } });
+          const channelId = logChannelId(await getSettings(guildId));
+          const channel = await globalClient?.guilds.cache.get(guildId)?.channels.fetch(channelId);
+          if (!channel?.isSendable() || channel.guildId !== guildId) continue;
+          let batch: QueueItem[] = [];
+          let length = 0;
+          const send = async () => {
+            if (!batch.length) return;
+            try {
+              await channel.send({ embeds: batch.map((item) => item.embed), files: batch.flatMap((item) => item.file ? [item.file] : []), allowedMentions: { parse: [] } });
+            } catch (error) {
+              console.error("Failed to send server log", error);
+            }
+          };
+          for (const item of items) {
+            if (length + item.embed.length > 6000) {
+              await send();
+              batch = [];
+              length = 0;
+            }
+            batch.push(item);
+            length += item.embed.length;
+          }
+          await send();
         } catch (error) {
-          console.error("Failed to send server log", error);
+          console.error("Failed to resolve server log destination", error);
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -315,12 +351,12 @@ export function logCommand(guild: Guild, userId: string, command: string, option
   const user = globalClient?.users.cache.get(userId);
   const displayName = guild.members.cache.get(userId)?.displayName;
   enqueue(guild, "commands", embed(guild, `${prefix ? "Prefix" : "Slash"} command used`, COLORS.command,
-    commandLogDetails(userId, command, truncate(options, 1024), channelId, prefix, user?.username, displayName)));
+    commandLogDetails(userId, command, options, channelId, prefix, user?.username, displayName)));
 }
 
 export function logCommandError(guild: Guild, userId: string, command: string, error: unknown, channelId?: string): void {
   const user = globalClient?.users.cache.get(userId);
-  enqueue(guild, "commands", embed(guild, "Command error", COLORS.delete, [["Who", userText(userId, user?.username)], ["Actor", userText(userId, user?.username)], ["Command", command], ...(channelId ? [["Channel", `<#${channelId}>`] as [string, string]] : []), ["Error", error instanceof Error ? error.message : String(error)] ]));
+  enqueue(guild, "commands", embed(guild, "Command error", COLORS.delete, [["Who", userText(userId, user?.username)], ["Actor", userText(userId, user?.username)], ["Command", command], ...(channelId ? [["Channel", `<#${channelId}>`] as [string, string]] : []), ["Error", error instanceof Error ? humanize(error.name) : "Unknown error"] ]));
 }
 
 function readProperty(value: unknown, key: string): unknown {
@@ -330,15 +366,48 @@ function readProperty(value: unknown, key: string): unknown {
   return Reflect.get(value, key);
 }
 
-function displayValue(value: unknown): string {
-  if (value === null || value === undefined) return "none";
-  if (Array.isArray(value)) return value.map(displayValue).join(", ") || "none";
-  if (typeof value === "object") {
-    return JSON.stringify(value, (_, item: unknown) =>
-      typeof item === "bigint" ? item.toString() : item,
-    ) ?? String(value);
+function enumLabel(values: Record<number, string>, value: unknown): string {
+  return typeof value === "number" && values[value] ? humanize(values[value]!) : "Unknown";
+}
+
+const propertyLabels: Record<string, string> = {
+  parentId: "Category",
+  rateLimitPerUser: "Slowmode",
+  nsfw: "NSFW",
+  hoist: "Display separately",
+  userLimit: "User limit",
+};
+
+const propertyEnums: Record<string, Record<number, string>> = {
+  verificationLevel: GuildVerificationLevel,
+  explicitContentFilter: GuildExplicitContentFilter,
+  defaultMessageNotifications: GuildDefaultMessageNotifications,
+  status: GuildScheduledEventStatus,
+  entityType: GuildScheduledEventEntityType,
+  eventType: AutoModerationRuleEventType,
+  triggerType: AutoModerationRuleTriggerType,
+};
+
+function displayProperty(item: unknown, property: string, value: unknown): string {
+  if (value === undefined) return "Unknown";
+  if (value === null) return "None";
+  if (property === "parentId" || property === "channelId" || property === "afkChannelId" || property === "systemChannelId") {
+    const channel = (readProperty(item, "guild") as Guild | undefined)?.channels.cache.get(String(value));
+    return channel ? escapeMarkdown(channel.name) + idMarker("Channel", channel.id) : idText(String(value));
   }
-  return String(value);
+  if (property === "type") return enumLabel(ChannelType, value);
+  const values = propertyEnums[property];
+  if (values) return enumLabel(values, value);
+  if (property === "name" && readProperty(item, "permissionOverwrites")) return "#" + escapeMarkdown(String(value));
+  if (property === "topic") return '"' + escapeMarkdown(String(value)) + '"';
+  if (property === "rateLimitPerUser" || property === "afkTimeout") return String(value) + "s";
+  if (property === "bitrate") return String(Number(value) / 1000) + " kbps";
+  if (property === "color") return "#" + Number(value).toString(16).padStart(6, "0").toUpperCase();
+  if (property.endsWith("Timestamp") && typeof value === "number") return "<t:" + Math.floor(value / 1000) + ":F>";
+  if (typeof value === "boolean") return value ? "On" : "Off";
+  if (typeof value === "string") return escapeMarkdown(value) || "None";
+  if (typeof value === "number") return String(value);
+  return "Unknown";
 }
 
 function genericTarget(item: unknown): string {
@@ -352,28 +421,27 @@ function genericTarget(item: unknown): string {
   return id ? String(id) : "Event target not identified";
 }
 
-function changedProperties(
-  previous: unknown,
-  current: unknown,
-  properties: readonly string[],
-): string[] {
-  return properties.flatMap((property) => {
-    const readValue = (item: unknown) => {
-      if (property !== "permissionOverwrites") return readProperty(item, property);
-      const cache = readProperty(readProperty(item, property), "cache");
-      if (!cache || typeof cache !== "object" || !("values" in cache)) return cache;
-      const values = Reflect.get(cache, "values");
-      if (typeof values !== "function") return cache;
-      return [...(values.call(cache) as Iterable<unknown>)].map((overwrite) => ({
-        id: readProperty(overwrite, "id"),
-        allow: String(readProperty(readProperty(overwrite, "allow"), "bitfield")),
-        deny: String(readProperty(readProperty(overwrite, "deny"), "bitfield")),
-      }));
-    };
-    const before = readValue(previous);
-    const after = readValue(current);
-    if (displayValue(before) === displayValue(after)) return [];
-    return [`${property}: ${displayValue(before)} → ${displayValue(after)}`];
+function changedProperties(previous: unknown, current: unknown, properties: readonly string[]): Array<[string, string]> {
+  return properties.flatMap((property): Array<[string, string]> => {
+    const before = readProperty(previous, property);
+    const after = readProperty(current, property);
+    if (before === after) return [];
+    if (property === "tags" && typeof before === "string" && typeof after === "string") {
+      const tags = (value: string) => value.split(",").map((tag) => tag.trim()).sort().join(", ");
+      if (tags(before) === tags(after)) return [];
+    }
+    if (property === "permissions") {
+      const oldBits = readProperty(before, "bitfield");
+      const newBits = readProperty(after, "bitfield");
+      if (typeof oldBits !== "bigint" || typeof newBits !== "bigint" || oldBits === newBits) return [];
+      const details = [
+        ...(newBits & ~oldBits ? ["Granted " + permissionNames(newBits & ~oldBits)] : []),
+        ...(oldBits & ~newBits ? ["Removed " + permissionNames(oldBits & ~newBits)] : []),
+      ];
+      return [["Permissions", details.join("\\n")]];
+    }
+    return [[propertyLabels[property] ?? humanize(property),
+      displayProperty(previous, property, before) + " → " + displayProperty(current, property, after)]];
   });
 }
 
@@ -409,31 +477,23 @@ async function loadInviteSnapshot(guild: Guild): Promise<InviteSnapshot> {
   );
 }
 
-async function identifyJoinInvite(guild: Guild): Promise<InviteAttribution> {
+async function identifyJoinInvite(guild: Guild): Promise<string> {
   return withInviteFetch(guild, async () => {
     const previous = inviteSnapshots.get(guild.id);
     const current = await loadInviteSnapshot(guild);
     inviteSnapshots.set(guild.id, current);
-    if (!previous) return { detail: "Not identified (invite tracking is initializing)", actor: "Invite creator not identified" };
+    if (!previous) return "Unknown (invite tracking is initializing)";
 
     const increased = [...current.entries()].filter(
       ([code, invite]) => invite.uses > (previous.get(code)?.uses ?? 0),
     );
-    if (increased.length === 1) {
+    if (increased.length === 1 && increased[0]![1].uses - (previous.get(increased[0]![0])?.uses ?? 0) === 1) {
       const [code, invite] = increased[0]!;
-      return { detail: `${code} (created by ${invite.inviter}; ${invite.uses} uses)`, actor: invite.inviter };
+      return `${code} (created by ${invite.inviter}, ${invite.uses} uses)`;
     }
-    if (increased.length > 1) return { detail: "Not identified (multiple invites were used)", actor: "Invite creator not identified" };
-    return { detail: "Not identified (no invite usage increase detected)", actor: "Invite creator not identified" };
+    if (increased.length) return "Unknown (multiple invite uses detected)";
+    return "Unknown (no invite usage increase detected)";
   });
-}
-
-function messageContent(message: Message): string {
-  return message.content || "No text content";
-}
-
-function attachmentDetails(message: Message): string {
-  return [...message.attachments.values()].map((attachment) => inlineCode(attachment.name ?? "Attachment")).join("\n") || "No attachments";
 }
 
 export function registerServerLogger(client: Client): void {
@@ -449,55 +509,81 @@ export function registerServerLogger(client: Client): void {
   });
   const safe = (event: string, handler: (...args: any[]) => Promise<void> | void) => {
     client.on(event as never, (...args: any[]) => {
-      void Promise.resolve(handler(...args)).catch((error) => console.error(`Server log handler failed for ${event}`, error));
+      try {
+        void Promise.resolve(handler(...args)).catch((error) => console.error("Server log handler failed for", event, error));
+      } catch (error) {
+        console.error("Server log handler failed for", event, error);
+      }
     });
   };
 
-  safe(Events.MessageDelete, async (message: Message) => {
-    const full = message.partial ? await message.fetch().catch(() => null) : message;
-    const snapshot = (full && snapshotMessage(full)) ?? snapshots.get(message.id);
-    const guild = full?.guild ?? (snapshot ? globalClient?.guilds.cache.get(snapshot.guildId) : undefined);
-    if (guild && snapshot) {
-      const logChannelId = (await getSettings(guild.id)).channelId ?? process.env.LOG_CHANNEL_ID ?? DEFAULT_CHANNEL_ID;
-      if (snapshot.channelId === logChannelId) { snapshots.delete(message.id); return; }
-      const actor = await messageDeleteActor(guild, snapshot.authorId, snapshot.channelId);
-      const deletedBy = deletedByLabel(
-        snapshot.authorId,
-        snapshot.authorTag,
-        "id" in actor ? actor.id : null,
-        "id" in actor ? actor.username : null,
-        "id" in actor ? "available" : actor.auditStatus,
-      );
-      const authorAvatar = guild.members.cache.get(snapshot.authorId)?.displayAvatarURL({ extension: "png", size: 128 });
-      enqueue(guild, "messages", embed(guild, "Message deleted", COLORS.delete, [
-        ["Who", userText(snapshot.authorId, snapshot.authorTag)], ...optionalActorField(deletedBy),
-        ["Channel", `${idText(snapshot.channelId)}${idMarker("Message", snapshot.id)}`], ["Content", escapeMarkdown(snapshot.content)], ["Attachments", snapshot.attachments.split("\n").map(inlineCode).join("\n")],
-      ], undefined, snapshot.imageUrl, authorAvatar));
-      snapshots.delete(message.id);
+  safe(Events.MessageDelete, async (message: Message | PartialMessage) => {
+    const snapshot = snapshotMessage(message) ?? snapshots.get(message.id);
+    snapshots.delete(message.id);
+    const guild = message.guild;
+    if (!guild) return;
+    const settings = await getSettings(guild.id);
+    if (ignored(settings, "messages", message)) return;
+    if (snapshot && (snapshot.authorId === client.user?.id ||
+        (snapshot.authorBot && process.env.LOG_BOT_MESSAGES !== "true") ||
+        settings.ignoredUsers.includes(snapshot.authorId))) return;
+    const actor = snapshot
+      ? await auditActor(guild, AuditLogEvent.MessageDelete, snapshot.authorId, message.channelId)
+      : "";
+    const fields: Array<[string, string]> = [
+      ["Who", snapshot ? userText(snapshot.authorId, snapshot.authorTag) : "Unknown"],
+      ["Actor", deletedByLabel(Boolean(snapshot), actor)],
+      ["Channel", idText(message.channelId) + idMarker("Message", message.id)],
+    ];
+    if (!snapshot) fields.push(["Content", "Content unavailable (message wasn't cached)"]);
+    else {
+      if (snapshot.content) fields.push(["Content", /^https?:\/\/\S+$/i.test(snapshot.content.trim())
+        ? "Link/GIF only\\n" + escapeMarkdown(snapshot.content) : escapeMarkdown(snapshot.content)]);
+      if (snapshot.attachments) fields.push(["Attachments", snapshot.attachments]);
+      if (snapshot.stickers) fields.push(["Stickers", snapshot.stickers]);
+      if (snapshot.embeds) fields.push(["Embeds", snapshot.embeds]);
+      if (!snapshot.content && !snapshot.attachments && !snapshot.stickers && !snapshot.embeds) {
+        fields.push(["Content", "No text, attachments, stickers or embeds"]);
+      }
     }
+    await enqueue(guild, "messages", embed(guild, "Message deleted", COLORS.delete, fields,
+      undefined, snapshot?.imageUrl, snapshot?.avatarUrl), undefined, message);
   });
-  safe(Events.MessageUpdate, async (oldMessage: Message, newMessage: Message) => {
-    if (!newMessage.guild) return;
-    const before = oldMessage.partial ? snapshots.get(oldMessage.id)?.content : messageContent(oldMessage);
-    const fetched = newMessage.partial ? await newMessage.fetch().catch(() => newMessage) : newMessage;
-    enqueue(newMessage.guild, "messages", embed(newMessage.guild, "Message updated", COLORS.update, [
-      ["Who", fetched.author ? userText(fetched.author.id, fetched.author.username) : "Member not identified"],
-      ...optionalActorField(fetched.author ? userText(fetched.author.id, fetched.author.username) : ""),
-      ["Channel", idText(fetched.channelId)], ["Before", before ?? "No previous snapshot available"],
-      ["After", messageContent(fetched)], ["Attachments", attachmentDetails(fetched)],
-    ], undefined, imageUrlFromMessage(fetched)), undefined, fetched);
-    rememberMessage(fetched);
+  safe(Events.MessageUpdate, async (oldMessage: Message | PartialMessage, message: Message | PartialMessage) => {
+    const guild = message.guild;
+    if (!guild) return;
+    const before = snapshotMessage(oldMessage) ?? snapshots.get(message.id);
+    const after = snapshotMessage(message);
+    if (!after) return;
+    rememberMessage(after);
+    if (!before) return;
+    const changes: Array<[string, string]> = [];
+    if (before.content !== after.content) changes.push(
+      ["Before", escapeMarkdown(before.content) || "No text"], ["After", escapeMarkdown(after.content) || "No text"],
+    );
+    if (before.attachmentIds !== after.attachmentIds) changes.push(["Attachments", (before.attachments || "None") + " → " + (after.attachments || "None")]);
+    if (before.stickerIds !== after.stickerIds) changes.push(["Stickers", (before.stickers || "None") + " → " + (after.stickers || "None")]);
+    if (!changes.length) return;
+    await enqueue(guild, "messages", embed(guild, "Message updated", COLORS.update, [
+      ["Who", userText(after.authorId, after.authorTag)], ["Channel", idText(message.channelId) + idMarker("Message", message.id)], ...changes,
+    ], undefined, after.imageUrl, after.avatarUrl), undefined, message);
   });
   safe(Events.MessageBulkDelete, async (messages: any) => {
     const first = messages.first?.() as Message | undefined;
     if (first?.guild) {
-      const authors = [...messages.values()].map((message: Message) => message.author && userText(message.author.id, message.author.tag));
+      const settings = await getSettings(first.guild.id);
+      const affectedMessages = [...messages.values()].filter((message: Message) => {
+        snapshots.delete(message.id);
+        return !ignored(settings, "messages", message);
+      });
+      if (!affectedMessages.length) return;
+      const authors = affectedMessages.map((message: Message) => message.author && userText(message.author.id, message.author.tag));
       const affected = [...new Set(authors.filter(Boolean))];
-      const actor = await auditActor(first.guild, AuditLogEvent.MessageBulkDelete);
+      const actor = await auditActor(first.guild, AuditLogEvent.MessageBulkDelete, first.channelId);
       const who = affected.length > 10 ? `${affected.slice(0, 10).join(", ")} +${affected.length - 10} more` : affected.join(", ");
       enqueue(first.guild, "messages", embed(first.guild, "Messages bulk deleted", COLORS.delete, [
         ["Who", who || "Message authors not identified"],
-        ...optionalActorField(actor), ["Channel", idText(first.channelId)], ["Count", String(messages.size)],
+        ...optionalActorField(actor), ["Channel", idText(first.channelId)], ["Count", String(affectedMessages.length)],
       ]));
     }
   });
@@ -509,15 +595,22 @@ export function registerServerLogger(client: Client): void {
     const message = reaction.message as Message;
     if (message.guild) enqueue(message.guild, "messages", embed(message.guild, "Reaction removed", COLORS.delete, [["Who", message.author ? userText(message.author.id, message.author.username) : "Message author not identified"], ["Actor", userText(user.id, user.username)], ["Emoji", reaction.emoji.toString()], ["Message", message.id], ["Channel", idText(message.channelId)]]), undefined, message);
   });
-  safe(Events.MessageReactionRemoveAll, async (message: Message) => { if (message.guild) enqueue(message.guild, "messages", embed(message.guild, "All reactions removed", COLORS.delete, [["Who", message.author ? userText(message.author.id, message.author.username) : "Message author not identified"], ["Message", message.id], ["Channel", idText(message.channelId)]])); });
-  safe(Events.MessageReactionRemoveEmoji, async (reaction: any) => { const message = reaction.message as Message; if (message.guild) enqueue(message.guild, "messages", embed(message.guild, "Reaction emoji removed", COLORS.delete, [["Who", message.author ? userText(message.author.id, message.author.username) : "Message author not identified"], ["Emoji", reaction.emoji.toString()], ["Message", message.id], ["Channel", idText(message.channelId)]])); });
-  safe(Events.ChannelPinsUpdate, async (channel: any) => { if (channel.guild) enqueue(channel.guild, "messages", embed(channel.guild, "Channel pins updated", COLORS.update, [...optionalActorField(await auditActor(channel.guild, AuditLogEvent.MessagePin)), ["Channel", idText(channel.id)]])); });
+  safe(Events.MessageReactionRemoveAll, async (message: Message) => { if (message.guild) enqueue(message.guild, "messages", embed(message.guild, "All reactions removed", COLORS.delete, [["Who", message.author ? userText(message.author.id, message.author.username) : "Message author not identified"], ["Message", message.id], ["Channel", idText(message.channelId)]]), undefined, message); });
+  safe(Events.MessageReactionRemoveEmoji, async (reaction: any) => { const message = reaction.message as Message; if (message.guild) enqueue(message.guild, "messages", embed(message.guild, "Reaction emoji removed", COLORS.delete, [["Who", message.author ? userText(message.author.id, message.author.username) : "Message author not identified"], ["Emoji", reaction.emoji.toString()], ["Message", message.id], ["Channel", idText(message.channelId)]]), undefined, message); });
+  safe(Events.ChannelPinsUpdate, async (channel: GuildChannel) => {
+    if (!channel.guild) return;
+    const settings = await getSettings(channel.guild.id);
+    if (channel.id === logChannelId(settings) || settings.ignoredChannels.includes(channel.id)) return;
+    await enqueue(channel.guild, "messages", embed(channel.guild, "Channel pins updated", COLORS.update,
+      [["Channel", idText(channel.id)]]));
+  });
   safe(Events.MessageCreate, async (message: Message) => {
-    if (message.guild) rememberMessage(message);
+    const snapshot = snapshotMessage(message);
+    if (snapshot && snapshot.authorId !== client.user?.id) rememberMessage(snapshot);
   });
 
   safe(Events.GuildMemberAdd, async (member: GuildMember) => {
-    let attribution: InviteAttribution = { detail: "Invite not identified (Manage Server permission may be needed)", actor: "Invite creator not identified" };
+    let attribution = "Unknown";
     try {
       attribution = await identifyJoinInvite(member.guild);
     } catch (error) {
@@ -525,15 +618,15 @@ export function registerServerLogger(client: Client): void {
     }
     enqueue(member.guild, "members", embed(member.guild, "Member joined", COLORS.create, [
       ["Who", userText(member.id, member.user.username)],
-      ...optionalActorField(attribution.actor.toLowerCase().includes("not identified") ? "" : attribution.actor),
       ["Account age", `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`],
-      ["Invite", attribution.detail],
+      ["Invite", attribution],
     ]));
   });
   safe(Events.GuildMemberRemove, async (member: GuildMember) => enqueue(member.guild, "members", embed(member.guild, "Member left", COLORS.delete, [["Who", userText(member.id, member.user.username)], ...optionalActorField(await auditActor(member.guild, AuditLogEvent.MemberKick, member.id)), ["Reason", "Member left or was removed"]])));
   safe(Events.GuildBanAdd, async (ban: any) => enqueue(ban.guild, "members", embed(ban.guild, "Member banned", COLORS.delete, [["Who", userText(ban.user.id, ban.user.username)], ...optionalActorField(await auditActor(ban.guild, AuditLogEvent.MemberBanAdd, ban.user.id)), ["Reason", ban.reason ?? "No reason provided"]])));
   safe(Events.GuildBanRemove, async (ban: any) => enqueue(ban.guild, "members", embed(ban.guild, "Member unbanned", COLORS.create, [["Who", userText(ban.user.id, ban.user.username)], ...optionalActorField(await auditActor(ban.guild, AuditLogEvent.MemberBanRemove, ban.user.id)), ["Reason", ban.reason ?? "No reason provided"]])));
-  safe(Events.GuildMemberUpdate, async (oldMember: GuildMember, member: GuildMember) => {
+  safe(Events.GuildMemberUpdate, async (oldMember: GuildMember | PartialGuildMember, member: GuildMember) => {
+    if (oldMember.partial) return;
     const changes: Array<[string, string]> = [];
     if (oldMember.nickname !== member.nickname) changes.push(["Nickname", `${oldMember.nickname ?? "none"} → ${member.nickname ?? "none"}`]);
     const added = member.roles.cache.filter((role) => !oldMember.roles.cache.has(role.id)).map((role) => role.name);
@@ -542,43 +635,66 @@ export function registerServerLogger(client: Client): void {
     if (removed.length) changes.push(["Roles removed", formatRoleList(removed)]);
     if (oldMember.communicationDisabledUntilTimestamp !== member.communicationDisabledUntilTimestamp) changes.push(["Timeout", member.communicationDisabledUntilTimestamp ? `until <t:${Math.floor(member.communicationDisabledUntilTimestamp / 1000)}:F>` : "removed"]);
     if (changes.length) {
-      const actor = await auditActor(member.guild, AuditLogEvent.MemberUpdate, member.id, true);
+      const settings = await getSettings(member.guild.id);
+      if (!settings.enabled.members || settings.ignoredUsers.includes(member.id) ||
+          member.roles.cache.some((role) => settings.ignoredRoles.includes(role.id))) return;
+      const roleChanged = added.length || removed.length;
+      const profileChanged = changes.some(([name]) => name === "Nickname" || name === "Timeout");
+      const actor = roleChanged && profileChanged ? "" : await auditActor(
+        member.guild, roleChanged ? AuditLogEvent.MemberRoleUpdate : AuditLogEvent.MemberUpdate, member.id,
+      );
       enqueue(member.guild, "members", embed(member.guild, "Member updated", COLORS.update, [...optionalActorField(actor), ["Who", userText(member.id, member.user.username)], ...changes]));
     }
   });
-  safe(Events.UserUpdate, async (oldUser: any, user: any) => { for (const guild of globalClient?.guilds.cache.values() ?? []) { if (oldUser.username !== user.username || oldUser.globalName !== user.globalName || oldUser.avatar !== user.avatar) enqueue(guild, "members", embed(guild, "User profile updated", COLORS.update, [["Who", userText(user.id, user.tag)], ["Actor", userText(user.id, user.tag)], ["Username", `${oldUser.username} → ${user.username}`], ["Global name", `${oldUser.globalName ?? "none"} → ${user.globalName ?? "none"}`], ["Avatar", oldUser.avatar !== user.avatar ? "changed" : "unchanged"]])); } });
+  safe(Events.UserUpdate, async (oldUser: User | PartialUser, user: User) => {
+    if (oldUser.partial) return;
+    const fields = changedProperties(oldUser, user, ["username", "globalName"]);
+    if (oldUser.avatar !== user.avatar) fields.push(["Avatar", "Changed"]);
+    if (!fields.length) return;
+    for (const guild of client.guilds.cache.values()) {
+      if (!guild.members.cache.has(user.id)) continue;
+      await enqueue(guild, "members", embed(guild, "User profile updated", COLORS.update,
+        [["Who", userText(user.id, user.username)], ...fields], undefined, undefined, avatarUrl(user)));
+    }
+  });
   const voiceMembers = new Map<string, { guild: Guild; member: GuildMember }>();
-  const voiceBatcher = new VoiceLogBatcher(async (key, changes) => {
+  const voiceBatcher = new VoiceLogBatcher((key, changes) => {
+    const write = logVoiceChanges(key, changes).catch((error) => console.error("Failed to log voice changes", error));
+    pendingVoiceWrites.add(write);
+    void write.finally(() => pendingVoiceWrites.delete(write));
+  });
+  async function logVoiceChanges(key: string, changes: VoiceLogChange[]): Promise<void> {
     const context = voiceMembers.get(key);
+    voiceMembers.delete(key);
     if (!context || !changes.length) return;
     const summary = summarizeVoiceChanges(changes);
     if (!summary) return;
-    const botDidIt = context.member.id === globalClient?.user?.id || botVoiceChanges.has(key);
+    const channelId = context.member.voice.channelId;
+    const settings = await getSettings(context.guild.id);
+    if (!settings.enabled.voice || settings.ignoredUsers.includes(context.member.id) ||
+        (channelId && settings.ignoredChannels.includes(channelId)) ||
+        context.member.roles.cache.some((role) => settings.ignoredRoles.includes(role.id))) return;
+    const botDidIt = Date.now() - (botVoiceChanges.get(key) ?? 0) < 10_000;
     botVoiceChanges.delete(key);
     const hasServerChange = changes.some((change) => change.title.startsWith("Server "));
-    const actorType = changes.some((change) => change.title === "Left voice channel") ? AuditLogEvent.MemberDisconnect
-      : changes.some((change) => change.title === "Switched voice channel" || change.title === "Joined voice channel") ? AuditLogEvent.MemberMove : null;
     const memberLabel = userText(context.member.id, context.member.displayName);
     let actor = "";
     if (botDidIt && hasServerChange && globalClient?.user) actor = userText(globalClient.user.id, globalClient.user.username);
-    else if (actorType || hasServerChange) actor = await auditActor(context.guild, actorType ?? AuditLogEvent.MemberUpdate, context.member.id, true);
+    else if (hasServerChange) actor = await auditActor(context.guild, AuditLogEvent.MemberUpdate, context.member.id);
     if (actor === memberLabel || actor.includes(`{User:${context.member.id}}`)) actor = "";
     const details = [...summary.changes];
-    const hasChannel = !!context.member.voice.channelId;
-    if (!hasChannel) {
+    const hasChannel = !!channelId;
+    if (!hasChannel && summary.title === "Left voice channel") {
       const endpoint = changes.find((change) => change.title === "Left voice channel");
       if (endpoint) details.unshift(endpoint.text);
     }
-    const write = enqueue(context.guild, "voice", embed(context.guild, summary.title, summary.color, [
+    await enqueue(context.guild, "voice", embed(context.guild, summary.title, summary.color, [
       ["Who", memberLabel],
       ...optionalActorField(actor),
-      ...(context.member.voice.channelId ? [["Channel", idText(context.member.voice.channelId)] as [string, string]] : []),
+      ...(channelId ? [["Channel", idText(channelId)] as [string, string]] : []),
       ["Changes", details.join(", then ")],
-    ], undefined, undefined, context.member.displayAvatarURL({ extension: "png", size: 128 })));
-    pendingVoiceWrites.add(write);
-    void write.finally(() => pendingVoiceWrites.delete(write));
-    voiceMembers.delete(key);
-  });
+    ], undefined, undefined, avatarUrl(context.member.user)));
+  }
   flushPendingVoiceLogs = () => voiceBatcher.flushAll();
   safe(Events.VoiceStateUpdate, async (oldState: any, newState: any) => {
     const member = newState.member ?? oldState.member;
@@ -587,11 +703,7 @@ export function registerServerLogger(client: Client): void {
     if (!changes.length) return;
     const key = `${member.guild.id}:${member.id}`;
     voiceMembers.set(key, { guild: member.guild, member });
-    const botChangeKey = `${member.guild.id}:${member.id}`;
-    const botDidChange = Date.now() - (botVoiceChanges.get(botChangeKey) ?? 0) < 10_000;
-    for (const change of changes) voiceBatcher.add(key, botDidChange && change.title.startsWith("Server ")
-      ? { ...change, text: `${change.text} by dea` }
-      : change);
+    for (const change of changes) voiceBatcher.add(key, change);
   });
   process.once("SIGINT", flushPendingVoiceLogs);
   process.once("SIGTERM", flushPendingVoiceLogs);
@@ -611,9 +723,10 @@ export function registerServerLogger(client: Client): void {
       ["Expires", invite.maxAge ? `${invite.maxAge} seconds` : "Never"],
     ]));
   });
-  safe(Events.ThreadMembersUpdate, async (_members: any, added: any, removed: any, thread: any) => {
+  safe(Events.ThreadMembersUpdate, async (added: any, removed: any, thread: any) => {
     const guild = thread?.guild as Guild | undefined;
     if (!guild) return;
+    if (!added.size && !removed.size) return;
     const formatMembers = (collection: any) =>
       [...(collection?.values?.() ?? [])]
       .map((member: any) => userText(member.id, member.user?.username ?? member.username))
@@ -623,8 +736,8 @@ export function registerServerLogger(client: Client): void {
       ["Who", `Added: ${formatMembers(added)}; removed: ${formatMembers(removed)}`],
       ...optionalActorField(""),
       ...(thread.id ? [["Channel", `<#${thread.id}>`] as [string, string]] : []),
-      ["Added", formatMembers(added)],
-      ["Removed", formatMembers(removed)],
+      ...(added.size ? [["Added", formatMembers(added)] as [string, string]] : []),
+      ...(removed.size ? [["Removed", formatMembers(removed)] as [string, string]] : []),
     ]));
   });
   const logScheduledEventUser = (title: string, color: number) =>
@@ -644,9 +757,9 @@ export function registerServerLogger(client: Client): void {
     if (!guild) return;
     enqueue(guild, "automod", embed(guild, "Automod action executed", COLORS.delete, [
       ["Who", execution.user ? userText(execution.user.id, execution.user.username) : "Member not identified"],
-      ["Actor", "AutoMod"], ["Rule", execution.autoModerationRule?.name ?? execution.ruleId],
+      ["Actor", "AutoMod"], ["Rule", execution.autoModerationRule?.name ?? "Unknown rule (" + execution.ruleId + ")"],
       ...(execution.channelId ? [["Channel", `<#${execution.channelId}>`] as [string, string]] : []),
-      ["Action", displayValue(execution.action)],
+      ["Action", enumLabel(AutoModerationActionType, execution.action?.type)],
     ]));
   });
 
@@ -661,7 +774,6 @@ export function registerServerLogger(client: Client): void {
   const generic: GenericLog[] = [
     { event: Events.ChannelCreate, category: "channels", title: "Channel created", color: COLORS.create, auditType: AuditLogEvent.ChannelCreate },
     { event: Events.ChannelDelete, category: "channels", title: "Channel deleted", color: COLORS.delete, auditType: AuditLogEvent.ChannelDelete },
-    { event: Events.ChannelUpdate, category: "channels", title: "Channel updated", color: COLORS.update, auditType: AuditLogEvent.ChannelUpdate, update: true },
     { event: Events.ThreadCreate, category: "channels", title: "Thread created", color: COLORS.create, auditType: AuditLogEvent.ThreadCreate },
     { event: Events.ThreadDelete, category: "channels", title: "Thread deleted", color: COLORS.delete, auditType: AuditLogEvent.ThreadDelete },
     { event: Events.ThreadUpdate, category: "channels", title: "Thread updated", color: COLORS.update, auditType: AuditLogEvent.ThreadUpdate, update: true },
@@ -693,13 +805,40 @@ export function registerServerLogger(client: Client): void {
   const trackedProperties: Record<LogCategory, string[]> = {
     messages: [],
     members: [],
-    voice: [],
-    channels: ["name", "topic", "type", "parentId", "bitrate", "userLimit", "rateLimitPerUser", "nsfw", "position", "archived", "locked", "invitable", "permissionOverwrites"],
-    roles: ["name", "color", "hoist", "mentionable", "position", "permissions"],
-    server: ["name", "description", "verificationLevel", "explicitContentFilter", "defaultMessageNotifications", "preferredLocale"],
+    voice: ["topic", "channelId"],
+    channels: ["name", "topic", "type", "parentId", "bitrate", "userLimit", "rateLimitPerUser", "nsfw", "archived", "locked", "invitable", "autoArchiveDuration"],
+    roles: ["name", "color", "hoist", "mentionable", "permissions"],
+    server: ["name", "description", "verificationLevel", "explicitContentFilter", "defaultMessageNotifications", "preferredLocale", "afkChannelId", "afkTimeout", "systemChannelId"],
     commands: [],
     automod: ["name", "enabled", "eventType", "triggerType"],
   };
+
+  safe(Events.ChannelUpdate, async (previous: GuildChannel, channel: GuildChannel) => {
+    if (!previous.permissionOverwrites || !channel.permissionOverwrites) return;
+    const overwriteLabel = ({ id, type }: PermissionOverwrites) => {
+      if (id === channel.guild.id) return "@everyone";
+      if (type === OverwriteType.Role) return channel.guild.roles.cache.has(id)
+        ? "<@&" + id + ">" : "Unknown role (" + id + ")";
+      return channel.guild.members.cache.has(id) || client.users.cache.has(id)
+        ? userText(id) : "Unknown user (" + id + ")";
+    };
+    const permissions = channelPermissionChanges(previous.permissionOverwrites.cache, channel.permissionOverwrites.cache, overwriteLabel);
+    const changes = changedProperties(previous, channel, trackedProperties.channels);
+    if (!permissions.length && !changes.length) return;
+    const auditTypes = permissions.length
+      ? [AuditLogEvent.ChannelOverwriteUpdate, AuditLogEvent.ChannelOverwriteCreate, AuditLogEvent.ChannelOverwriteDelete]
+      : [];
+    auditTypes.push(AuditLogEvent.ChannelUpdate);
+    const actors = new Set((await Promise.all(auditTypes.map((type) => auditActor(channel.guild, type, channel.id)))).filter(Boolean));
+    const actor = actors.size === 1 ? [...actors][0]! : "Unknown";
+    const fields: Array<[string, string]> = [
+      ["Channel", idText(channel.id) + " (" + enumLabel(ChannelType, channel.type) + ")"],
+      ["Actor", actor],
+      ...(permissions.length ? [["Permissions", permissions.join("\\n")] as [string, string]] : []),
+      ...changes,
+    ];
+    await enqueue(channel.guild, "channels", embed(channel.guild, "Channel updated", COLORS.update, fields));
+  });
 
   for (const config of generic) {
     safe(config.event, async (...args: any[]) => {
@@ -717,27 +856,28 @@ export function registerServerLogger(client: Client): void {
         : config.auditType === AuditLogEvent.InviteDelete
           ? readProperty(item, "code") ?? readProperty(item, "id")
           : readProperty(item, "id");
-      const actor = config.auditType
-        ? await auditActor(guild, config.auditType, id ? String(id) : undefined)
-        : "";
-      const details = config.update
-        ? changedProperties(previous, item, trackedProperties[config.category])
-        : [];
+      const properties = config.event === Events.GuildEmojiUpdate ? ["name", "available"]
+        : config.event === Events.GuildStickerUpdate ? ["name", "description", "tags", "available"]
+        : config.event === Events.GuildScheduledEventUpdate ? ["name", "description", "channelId", "scheduledStartTimestamp", "scheduledEndTimestamp", "status", "entityType"]
+        : trackedProperties[config.category];
+      if (config.update && readProperty(previous, "partial")) return;
+      const details = config.update ? changedProperties(previous, item, properties) : [];
+      if (config.update && !details.length) return;
+      const actor = config.auditType ? await auditActor(guild, config.auditType, id ? String(id) : undefined) : "";
       const values: Array<[string, string]> = [
         ...optionalActorField(actor),
-        ["Target", genericTarget(item)],
+        ["Target", config.category === "channels" && id ? idText(String(id)) : genericTarget(item)],
       ];
       const channelId = readProperty(item, "channelId");
-      if (typeof channelId === "string" && channelId) values.push(["Channel", `<#${channelId}>`]);
-      if (config.category === "channels" && id) values.push(["Channel", `<#${String(id)}>`]);
-      if (details.length > 0) {
-        values.push(["Changes", details.join("\n")]);
-      } else if (config.update) {
-        values.push(["Changes", "No tracked properties changed"]);
-      } else {
-        const type = readProperty(item, "type");
-        if (type !== undefined) values.push(["Type", displayValue(type)]);
+      if (typeof channelId === "string" && channelId) values.push(["Channel", idText(channelId)]);
+      const type = readProperty(item, "type");
+      if (config.category === "channels" && type !== undefined && !details.some(([name]) => name === "Type")) {
+        values.push(["Type", enumLabel(ChannelType, type)]);
       }
+      if ((config.event === Events.GuildStickerCreate || config.event === Events.GuildStickerDelete) && type !== undefined) {
+        values.push(["Type", enumLabel(StickerType, type)]);
+      }
+      values.push(...details);
       enqueue(guild, config.category, embed(guild, config.title, config.color, values));
     });
   }
