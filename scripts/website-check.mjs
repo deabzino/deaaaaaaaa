@@ -195,14 +195,26 @@ try {
   assert.equal(await commandPage.evaluate(() => navigator.clipboard.readText()), ".dead @Turhan");
   await commandPage.close();
 
-  const changePage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const changePage = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   changePage.on("pageerror", (error) => consoleErrors.push(`changelog: ${error.message}`));
   listenConsole(changePage, "changelog");
+  await changePage.route("**/changelog.json", async (route) => {
+    const response = await route.fetch();
+    const entries = await response.json();
+    const latestTime = Math.max(...entries.map(({ date }) => Date.parse(date)));
+    // Keep the real entries in order while making the latest one an hour old.
+    const offset = Date.now() - 60 * 60 * 1000 - latestTime;
+    const json = entries.map((entry) => ({
+      ...entry,
+      date: new Date(Date.parse(entry.date) + offset).toISOString(),
+    }));
+    await route.fulfill({ response, json });
+  });
   await changePage.goto(`${base}/changelog`, { waitUntil: "networkidle" });
   await changePage.waitForFunction(() => document.querySelectorAll(".timeline-entry").length > 0);
   const changelogEntryCount = await changePage.evaluate(async () => (await (await fetch("/changelog.json")).json()).length);
   assert.equal(await changePage.locator(".timeline-entry").count(), changelogEntryCount);
-  assert.match(await changePage.locator(".entry-date").first().textContent(), /ago/);
+  assert.match(await changePage.locator(".entry-date").first().textContent(), /\b1 hour ago$/);
   assert.equal(await changePage.locator(".latest-badge").count(), 1);
   const changelogWidth = await changePage.locator(".timeline-entry").first().evaluate((node) => node.getBoundingClientRect().width / document.querySelector("main").getBoundingClientRect().width);
   assert.ok(changelogWidth > .95, `changelog cards should fill the content width, got ${changelogWidth}`);
