@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
+import { createCaptureRouter } from "./routes/capture";
 import { logger } from "./lib/logger";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +35,7 @@ app.use(
   }),
 );
 app.use(cors());
+app.use("/api/capture", createCaptureRouter());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

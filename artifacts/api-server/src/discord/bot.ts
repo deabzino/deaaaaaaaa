@@ -35,6 +35,7 @@ import {
 } from "@discordjs/voice";
 import { logger } from "../lib/logger";
 import { prisma } from "../lib/prisma";
+import { captureCommand, handleCaptureCommand } from "./captureStatus";
 import {
   handleNWordMessage,
   isNWordCounterEnabled,
@@ -67,6 +68,7 @@ const COMMAND_NAMES = [
   "nwordclear",
   "nwordcounter",
   "logs",
+  "capture",
 ] as const;
 type CommandName = (typeof COMMAND_NAMES)[number];
 type VoiceCommand = Exclude<
@@ -82,6 +84,7 @@ type VoiceCommand = Exclude<
   | "nwordleaderboard"
   | "nwordclear"
   | "nwordcounter"
+  | "capture"
 >;
 const COMMANDS = new Set<CommandName>(COMMAND_NAMES);
 const VOICE_COMMANDS = new Set<VoiceCommand>([
@@ -134,6 +137,7 @@ export async function loadPersistedGuildState(): Promise<void> {
   }
 }
 const slashCommands = COMMAND_NAMES.map((name) => {
+  if (name === "capture") return captureCommand;
   const command = new SlashCommandBuilder()
     .setName(name)
     .setDescription(
@@ -1134,6 +1138,7 @@ function getPrefixCommand(content: string): CommandName | null {
   }
 
   const name = command.slice(1);
+  if (name === "capture") return null;
   if (COMMANDS.has(name as CommandName)) {
     return name as CommandName;
   }
@@ -1454,7 +1459,11 @@ export function startDiscordBot(): Client | null {
   client.on(Events.InteractionCreate, async (interaction) => {
     try {
       if (interaction.isChatInputCommand()) {
-        await handleSlashCommand(interaction);
+        if (interaction.commandName === captureCommand.name) {
+          await handleCaptureCommand(interaction);
+        } else {
+          await handleSlashCommand(interaction);
+        }
       } else if (interaction.isButton()) {
         if (interaction.customId.startsWith("help_")) {
           const category = interaction.customId.replace(
