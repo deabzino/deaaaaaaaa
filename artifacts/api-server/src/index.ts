@@ -35,14 +35,18 @@ function onListening(err?: Error): void {
       logger.info({ port }, "Website preview server listening");
       return;
     }
-    await initDatabase();
-    await syncFromDatabase();
-    await syncToDatabase();
-    await loadPersistedGuildState();
+    try {
+      await initDatabase();
+      await syncFromDatabase();
+      await syncToDatabase();
+      await loadPersistedGuildState();
+    } catch {
+      logger.warn("Database startup tasks failed; starting Discord with available state");
+    }
     logger.info({ port }, "Server listening");
     startDiscordBot();
   })().catch((error: unknown) => {
-    logger.error({ err: error }, "Database startup tasks failed");
+    logger.error({ err: error }, "Server startup failed");
     process.exit(1);
   });
 }

@@ -1,4 +1,4 @@
-import { COLOUR_NAMES, type CaptureGame, type CaptureSnapshot } from "./protocol";
+import { COLOUR_NAMES, type CaptureGame, type CapturePlayer, type CaptureSnapshot } from "./protocol";
 
 const REGIONS = ["North America", "Asia", "Europe"];
 const MAPS = ["The Skeld", "MIRA HQ", "Polus", "dlekS", "The Airship", "The Fungle"];
@@ -11,6 +11,7 @@ export type CaptureStatus = {
   region: string;
   map: string;
   roster: string[];
+  rosterPlayers: Omit<CapturePlayer, "dead">[];
 };
 
 function safeName(name: string): string {
@@ -46,7 +47,8 @@ export class StatusProjection {
   }
 
   private render(game: CaptureGame | null): CaptureStatus {
-    const roster = [...(game?.players ?? [])].sort((a, b) => a.colour - b.colour).map((player) => {
+    const players = [...(game?.players ?? [])].sort((a, b) => a.colour - b.colour);
+    const roster = players.map((player) => {
       const status = game?.phase === "lobby" ? "" :
         this.disclosed.has(player.id) && player.dead ? " · Dead" : " · Alive";
       return `**${COLOUR_NAMES[player.colour]}** · ${safeName(player.name)}${status}`;
@@ -58,6 +60,7 @@ export class StatusProjection {
       region: game?.regionId == null ? "—" : REGIONS[game.regionId] ?? "Unknown",
       map: game?.mapId == null ? "—" : MAPS[game.mapId] ?? "Unknown",
       roster,
+      rosterPlayers: players.map(({ id, name, colour, disconnected }) => ({ id, name, colour, disconnected })),
     };
   }
 }

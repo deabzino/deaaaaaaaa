@@ -36,6 +36,8 @@ import {
 import { logger } from "../lib/logger";
 import { prisma } from "../lib/prisma";
 import { captureCommand, handleCaptureCommand } from "./captureStatus";
+import { CAPTURE_COLOUR_PICKER, handleCaptureLink, linkCommand, unlinkCommand } from "./captureLinks";
+import { captureRegistry } from "../among-us/registry";
 import {
   handleNWordMessage,
   isNWordCounterEnabled,
@@ -69,6 +71,8 @@ const COMMAND_NAMES = [
   "nwordcounter",
   "logs",
   "capture",
+  "link",
+  "unlink",
 ] as const;
 type CommandName = (typeof COMMAND_NAMES)[number];
 type VoiceCommand = Exclude<
@@ -85,6 +89,8 @@ type VoiceCommand = Exclude<
   | "nwordclear"
   | "nwordcounter"
   | "capture"
+  | "link"
+  | "unlink"
 >;
 const COMMANDS = new Set<CommandName>(COMMAND_NAMES);
 const VOICE_COMMANDS = new Set<VoiceCommand>([
@@ -138,6 +144,8 @@ export async function loadPersistedGuildState(): Promise<void> {
 }
 const slashCommands = COMMAND_NAMES.map((name) => {
   if (name === "capture") return captureCommand;
+  if (name === "link") return linkCommand;
+  if (name === "unlink") return unlinkCommand;
   const command = new SlashCommandBuilder()
     .setName(name)
     .setDescription(
@@ -1138,7 +1146,7 @@ function getPrefixCommand(content: string): CommandName | null {
   }
 
   const name = command.slice(1);
-  if (name === "capture") return null;
+  if (name === "capture" || name === "link" || name === "unlink") return null;
   if (COMMANDS.has(name as CommandName)) {
     return name as CommandName;
   }
@@ -1461,9 +1469,13 @@ export function startDiscordBot(): Client | null {
       if (interaction.isChatInputCommand()) {
         if (interaction.commandName === captureCommand.name) {
           await handleCaptureCommand(interaction);
+        } else if (interaction.commandName === linkCommand.name || interaction.commandName === unlinkCommand.name) {
+          await handleCaptureLink(interaction);
         } else {
           await handleSlashCommand(interaction);
         }
+      } else if (interaction.isStringSelectMenu() && interaction.customId === CAPTURE_COLOUR_PICKER) {
+        await handleCaptureLink(interaction);
       } else if (interaction.isButton()) {
         if (interaction.customId.startsWith("help_")) {
           const category = interaction.customId.replace(
@@ -1490,6 +1502,11 @@ export function startDiscordBot(): Client | null {
     });
   });
   client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+    const pairedVoice = captureRegistry.view(newState.guild.id)?.binding.voiceChannelId;
+    if (pairedVoice && oldState.channelId !== newState.channelId &&
+      (oldState.channelId === pairedVoice || newState.channelId === pairedVoice)) {
+      captureRegistry.refresh(newState.guild.id);
+    }
     if (oldState.member?.id === client.user?.id && !newState.channelId) {
       activeConnections.delete(oldState.guild.id);
     }

@@ -14,6 +14,8 @@ const { outputFiles } = await build({
       export { createCaptureRouter } from "../routes/capture";
       export { CaptureRegistry } from "./registry";
       export { handleCaptureCommand } from "../discord/captureStatus";
+      export { ColourLinks, normalizePlayerName } from "./colourLinks";
+      export { createMatchStore } from "./matchStore";
     `,
     resolveDir: fileURLToPath(new URL(".", import.meta.url)),
   },
@@ -25,7 +27,7 @@ const { outputFiles } = await build({
 });
 const module = { exports: {} };
 new Function("module", "exports", "require", outputFiles[0].text)(module, module.exports, createRequire(import.meta.url));
-const { CaptureRegistry, createCaptureRouter, handleCaptureCommand } = module.exports;
+const { CaptureRegistry, createCaptureRouter, handleCaptureCommand, ColourLinks, normalizePlayerName, createMatchStore } = module.exports;
 
 const stream = "a".repeat(32);
 const player = (id, name, colour, dead = false) => ({ id, name, colour, dead, disconnected: false });
@@ -71,14 +73,14 @@ test("Discord command pairs to its channels and authenticated snapshots edit one
   const command = (subcommand) => handleCaptureCommand({
     user: { id: "operator" },
     memberPermissions: { has: () => true },
-    guild: { id: "1", voiceStates: { cache: { get: () => ({ channelId: voice }) } }, members: { me: {} } },
+    guild: { id: "1", voiceStates: { cache: { get: () => ({ channelId: voice }), values: () => [] } }, members: { me: {} } },
     channel: {
       id: "2", isSendable: () => true, isDMBased: () => false, isThread: () => false,
       permissionsFor: () => ({ has: () => true }),
       send: async (options) => {
         messages.push(options);
         updates.push(options);
-        return { edit: async (edit) => updates.push(edit) };
+        return { id: "status-message", edit: async (edit) => updates.push(edit) };
       },
     },
     options: { getSubcommand: () => subcommand },
@@ -127,6 +129,8 @@ test("Discord command pairs to its channels and authenticated snapshots edit one
   assert.equal(field(lobby, "Region"), "Europe");
   assert.equal(field(lobby, "Map"), "The Airship");
   assert.deepEqual(messages[0].allowedMentions, { parse: [] });
+  const picker = messages[0].components[0].toJSON().components[0];
+  assert.deepEqual(picker.options.map((option) => option.label), ["Black", "Purple"]);
 
   await send(game(2, "tasks", [deadOrbit, pixel]));
   const tasks = await waitFor(phase("Tasks"));
@@ -160,4 +164,95 @@ test("Discord command pairs to its channels and authenticated snapshots edit one
   await command("revoke");
   assert.equal((await post("heartbeat", undefined, replacement)).status, 401);
   await waitFor(phase("Waiting for capture"));
+});
+
+class FakeMatchStore {
+  rows = new Map();
+  writes = [];
+
+  async find(guild, names) {
+    return names.flatMap((name) => {
+      const match = this.rows.get(`${guild}:${name}`);
+      return match ? [match] : [];
+    });
+  }
+
+  async save(guild, match, overwrite) {
+    const key = `${guild}:${match.normalizedName}`;
+    this.writes.push({ guild, ...match, overwrite });
+    if (overwrite || !this.rows.has(key)) this.rows.set(key, match);
+    return true;
+  }
+
+  async remove(guild, userId, names) {
+    for (const [key, match] of this.rows) {
+      if (key.startsWith(`${guild}:`) && match.userId === userId &&
+        (!names || names.includes(match.normalizedName))) this.rows.delete(key);
+    }
+    return true;
+  }
+}
+
+test("a unique normalized name follows a colour change and is remembered in its own server", async () => {
+  const store = new FakeMatchStore();
+  const links = new ColourLinks("server", store);
+  const purple = player(1, "P!x Él", 8);
+  assert.equal(normalizePlayerName("Ｐｘ_ÉL"), "pxél");
+  await links.reconcile([purple], [{ id: "member", names: ["something", "PX ÉL"] }]);
+  assert.equal(links.userFor({ ...purple, colour: 6 }), "member");
+  assert.deepEqual(store.writes, [{ guild: "server", normalizedName: "pxél", userId: "member", overwrite: false }]);
+
+  const member = { id: "member", names: ["new Discord name"] };
+  const nextPairing = new ColourLinks("server", store);
+  await nextPairing.reconcile([purple], [member]);
+  assert.equal(nextPairing.userFor(purple), "member");
+  const otherServer = new ColourLinks("other", store);
+  await otherServer.reconcile([purple], [member]);
+  assert.equal(otherServer.userFor(purple), undefined);
+  assert.equal(store.writes.length, 1);
+});
+
+test("ambiguity is never saved and explicit confirmation can be forgotten", async () => {
+  const store = new FakeMatchStore();
+  const links = new ColourLinks("server", store);
+  const members = [{ id: "a", names: ["Orbit", "Pixel"] }, { id: "b", names: ["Orbit"] }];
+  await links.reconcile([orbit, pixel], members);
+  assert.equal(links.userFor(orbit), undefined);
+  assert.equal(links.userFor(pixel), undefined);
+  assert.equal(store.writes.length, 0);
+
+  assert.deepEqual(await links.confirm(orbit, [orbit, pixel], "b", false), { linked: true, saved: true });
+  assert.deepEqual(await links.confirm(orbit, [orbit, pixel], "a", false), { linked: false, saved: false });
+  assert.deepEqual(await links.confirm(orbit, [orbit, pixel], "a", true), { linked: true, saved: true });
+  await links.unlink("b", true, "orbit");
+  assert.equal((await store.find("server", ["orbit"]))[0].userId, "a");
+  await links.unlink("a", true, "orbit");
+  await links.reconcile([orbit, pixel], members);
+  assert.equal(links.userFor(orbit), undefined);
+  assert.deepEqual(await store.find("server", ["orbit"]), []);
+  const duplicate = { ...orbit, id: 4, name: "OR-BIT" };
+  assert.deepEqual(await links.confirm(orbit, [orbit, duplicate], "b", true), { linked: true, saved: false });
+  assert.equal(store.writes.length, 2);
+});
+
+test("missing settings or failed Supabase requests preserve session links and log no credentials", async () => {
+  const warnings = [];
+  const secret = ["mock", "credential"].join("-");
+  for (const store of [
+    createMatchStore(undefined, undefined, (label) => warnings.push(label), () => assert.fail("unexpected request")),
+    createMatchStore("https://supabase.example", secret, (label) => warnings.push(label),
+      async (_url, { headers }) => {
+        assert.equal(headers.get("apikey"), secret);
+        throw new Error(`Fake transport error with ${secret}`);
+      }),
+  ]) {
+    const links = new ColourLinks("server", store);
+    await links.reconcile([orbit], [{ id: "a", names: ["OR-BIT"] }]);
+    assert.equal(links.userFor(orbit), "a");
+    assert.deepEqual(await links.confirm(pixel, [pixel], "b", false), { linked: true, saved: false });
+    assert.equal(links.userFor(pixel), "b");
+    assert.equal(await links.unlink("b", true), false);
+    assert.equal(links.userFor(pixel), undefined);
+  }
+  assert.deepEqual(warnings, ["not configured", "GET"]);
 });

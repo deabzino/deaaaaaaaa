@@ -4,6 +4,7 @@ import {
 } from "discord.js";
 import { captureRegistry } from "../among-us/registry";
 import { logger } from "../lib/logger";
+import { noteCaptureMessage, renderCaptureLinks } from "./captureLinks";
 
 export const captureCommand = new SlashCommandBuilder()
   .setName("capture")
@@ -47,6 +48,7 @@ export async function handleCaptureCommand(interaction: ChatInputCommandInteract
 
   let message: Message | undefined;
   const code = captureRegistry.issue({ guildId: guild.id, textChannelId: channel.id, voiceChannelId }, async (status, binding) => {
+    const { roster, components } = await renderCaptureLinks(guild, binding, status);
     const embed = new EmbedBuilder()
       .setTitle("Among Us")
       .addFields(
@@ -57,12 +59,13 @@ export async function handleCaptureCommand(interaction: ChatInputCommandInteract
         { name: "Region", value: status.region, inline: true },
         { name: "Map", value: status.map, inline: true },
       )
-      .setDescription(status.roster.length ? status.roster.join("\n") : "Waiting for players.");
-    const options = { embeds: [embed], allowedMentions: { parse: [] as [] } };
+      .setDescription(roster.length ? roster.join("\n") : "Waiting for players.");
+    const options = { embeds: [embed], components, allowedMentions: { parse: [] as [] } };
     try {
       if (message) {
         try {
           await message.edit(options);
+          noteCaptureMessage(binding, message.id);
           return;
         } catch (error) {
           if (!(error instanceof DiscordAPIError) || error.code !== 10008) throw error;
@@ -70,6 +73,7 @@ export async function handleCaptureCommand(interaction: ChatInputCommandInteract
         }
       }
       message = await channel.send(options);
+      noteCaptureMessage(binding, message.id);
     } catch (error) {
       logger.warn({ guildId: guild.id, channelId: channel.id, code: error instanceof DiscordAPIError ? error.code : undefined },
         "Capture status message update failed");

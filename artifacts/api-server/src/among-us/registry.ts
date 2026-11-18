@@ -14,10 +14,12 @@ class StatusPublisher {
   private timer?: NodeJS.Timeout;
   private busy = false;
   private sent?: string;
+  private revision = 0;
 
   constructor(private readonly sink: StatusSink) {}
 
-  publish(status: CaptureStatus, binding: CaptureBinding) {
+  publish(status: CaptureStatus, binding: CaptureBinding, refresh = false) {
+    if (refresh) this.revision++;
     this.pending = { status, binding };
     this.schedule(750);
   }
@@ -35,7 +37,7 @@ class StatusPublisher {
     const next = this.pending;
     this.pending = undefined;
     if (!next) return;
-    const key = JSON.stringify([next.status, next.binding.voiceChannelId]);
+    const key = JSON.stringify([next.status, next.binding.voiceChannelId, this.revision]);
     if (key === this.sent) return;
 
     this.busy = true;
@@ -62,6 +64,7 @@ type Session = {
   streamId?: string;
   sequence: number;
   lastSeenAt: number;
+  status?: CaptureStatus;
 };
 
 export class CaptureRegistry {
@@ -135,9 +138,23 @@ export class CaptureRegistry {
     const status = session.projection.update(snapshot, resync);
     if (status) {
       session.started = true;
+      session.status = status;
       session.publisher.publish(status, session.binding);
     }
     return 204;
+  }
+
+  view(guildId: string): { binding: CaptureBinding; status: CaptureStatus } | undefined {
+    const key = this.guildTokens.get(guildId);
+    const session = key ? this.sessions.get(key) : undefined;
+    if (session?.status) return { binding: session.binding, status: session.status };
+    return undefined;
+  }
+
+  refresh(guildId: string) {
+    const key = this.guildTokens.get(guildId);
+    const session = key ? this.sessions.get(key) : undefined;
+    if (session?.status) session.publisher.publish(session.status, session.binding, true);
   }
 
   private removePairings(guildId: string): boolean {
