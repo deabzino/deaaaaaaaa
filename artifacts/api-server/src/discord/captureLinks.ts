@@ -65,12 +65,31 @@ function voiceRoster(guild: Guild, channelId: string) {
   });
 }
 
+type LinkedPlayer = { id: number; name: string; colour: number; disconnected: boolean };
+let linksListener: ((guild: Guild) => void) | undefined;
+
+// The Discord member linked to a player in the current pairing, if any.
+export function linkedUserFor(guildId: string, binding: CaptureBinding, player: LinkedPlayer): string | undefined {
+  const state = states.get(guildId);
+  return state?.binding === binding ? state.links.userFor(player) : undefined;
+}
+
+// Called after links are re-matched, so mute decisions can follow new or changed links.
+export function onLinksReconciled(listener: (guild: Guild) => void) {
+  linksListener = listener;
+}
+
 export function renderCaptureLinks(guild: Guild, binding: CaptureBinding, status: CaptureStatus) {
   return inOrder(guild.id, async () => {
     if (captureRegistry.view(guild.id)?.binding !== binding || status.phase === "Waiting for capture")
       return { roster: status.roster, components: [] };
     const { links } = stateFor(guild.id, binding);
     await links.reconcile(status.rosterPlayers, voiceRoster(guild, binding.voiceChannelId));
+    try {
+      linksListener?.(guild);
+    } catch (error) {
+      logger.warn({ err: error, guildId: guild.id }, "Among Us mute re-evaluation failed after link update");
+    }
     const roster = status.roster.map((row, index) => {
       const userId = links.userFor(status.rosterPlayers[index]!);
       return userId ? `${row} · <@${userId}>` : row;

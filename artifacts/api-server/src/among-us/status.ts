@@ -4,9 +4,11 @@ const REGIONS = ["North America", "Asia", "Europe"];
 const MAPS = ["The Skeld", "MIRA HQ", "Polus", "dlekS", "The Airship", "The Fungle"];
 const PHASE_NAMES = { menu: "Waiting for a lobby", lobby: "Lobby", tasks: "Tasks", meeting: "Meeting", ended: "Ended" };
 
+export type CaptureMode = "Manual" | "Auto";
+
 export type CaptureStatus = {
   phase: string;
-  mode: "Manual";
+  mode: CaptureMode;
   lobby: string;
   region: string;
   map: string;
@@ -20,6 +22,7 @@ function safeName(name: string): string {
 }
 
 export class StatusProjection {
+  mode: CaptureMode = "Manual";
   private last?: CaptureSnapshot;
   private disclosed = new Set<number>();
   private active = false;
@@ -55,7 +58,7 @@ export class StatusProjection {
     });
     return {
       phase: game ? PHASE_NAMES[game.phase] : "Waiting for capture",
-      mode: "Manual",
+      mode: this.mode,
       lobby: game?.lobbyCode ?? "—",
       region: game?.regionId == null ? "—" : REGIONS[game.regionId] ?? "Unknown",
       map: game?.mapId == null ? "—" : MAPS[game.mapId] ?? "Unknown",

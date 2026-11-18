@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { parseSnapshot } from "./protocol";
-import { StatusProjection, type CaptureStatus } from "./status";
+import { parseSnapshot, type CaptureGame } from "./protocol";
+import { StatusProjection, type CaptureMode, type CaptureStatus } from "./status";
 
 const CODE_TTL = 5 * 60_000;
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -8,6 +8,15 @@ const digest = (value: string) => createHash("sha256").update(value).digest("hex
 
 export type CaptureBinding = { guildId: string; textChannelId: string; voiceChannelId: string };
 export type StatusSink = (status: CaptureStatus, binding: CaptureBinding) => Promise<void>;
+// "ended" means the session is gone (revoked or replaced) and anything it did should be undone.
+export type CaptureEvent = { kind: "snapshot" | "mode" | "ended"; binding: CaptureBinding };
+export type CaptureLatest = {
+  binding: CaptureBinding;
+  mode: CaptureMode;
+  lastSeenAt: number;
+  // Raw game state, including deaths nobody has reported yet. It is only for mute decisions.
+  game: CaptureGame | null | undefined;
+};
 
 class StatusPublisher {
   private pending?: { status: CaptureStatus; binding: CaptureBinding };
@@ -65,6 +74,8 @@ type Session = {
   sequence: number;
   lastSeenAt: number;
   status?: CaptureStatus;
+  game?: CaptureGame | null;
+  mode: CaptureMode;
 };
 
 export class CaptureRegistry {
@@ -72,6 +83,19 @@ export class CaptureRegistry {
   private readonly sessions = new Map<string, Session>();
   private readonly guildTokens = new Map<string, string>();
   private readonly publishers = new Map<string, { channelId: string; publisher: StatusPublisher }>();
+  private listener?: (event: CaptureEvent) => void;
+
+  listen(listener: (event: CaptureEvent) => void) {
+    this.listener = listener;
+  }
+
+  private emit(event: CaptureEvent) {
+    try {
+      this.listener?.(event);
+    } catch {
+      // A failing listener must never break authentication or the capture connection.
+    }
+  }
 
   issue(binding: CaptureBinding, sink: StatusSink): string {
     this.removePairings(binding.guildId);
@@ -102,6 +126,7 @@ export class CaptureRegistry {
     const tokenKey = digest(token);
     this.sessions.set(tokenKey, {
       binding, publisher, projection: new StatusProjection(), started: false, sequence: 0, lastSeenAt: Date.now(),
+      mode: "Manual",
     });
     this.guildTokens.set(binding.guildId, tokenKey);
     return token;
@@ -115,6 +140,7 @@ export class CaptureRegistry {
     if (session?.started) session.publisher.publish(session.projection.waiting(), session.binding);
     this.sessions.delete(key);
     this.guildTokens.delete(guildId);
+    if (session) this.emit({ kind: "ended", binding: session.binding });
     return true;
   }
 
@@ -136,12 +162,37 @@ export class CaptureRegistry {
     session.streamId = snapshot.streamId;
     session.sequence = snapshot.sequence;
     const status = session.projection.update(snapshot, resync);
+    session.game = snapshot.game;
     if (status) {
       session.started = true;
       session.status = status;
       session.publisher.publish(status, session.binding);
     }
+    this.emit({ kind: "snapshot", binding: session.binding });
     return 204;
+  }
+
+  latest(guildId: string): CaptureLatest | undefined {
+    const key = this.guildTokens.get(guildId);
+    const session = key ? this.sessions.get(key) : undefined;
+    if (!session) return undefined;
+    return { binding: session.binding, mode: session.mode, lastSeenAt: session.lastSeenAt, game: session.game };
+  }
+
+  // Returns false when there is no paired capture to change.
+  setMode(guildId: string, mode: CaptureMode): boolean {
+    const key = this.guildTokens.get(guildId);
+    const session = key ? this.sessions.get(key) : undefined;
+    if (!session) return false;
+    if (session.mode === mode) return true;
+    session.mode = mode;
+    session.projection.mode = mode;
+    if (session.status) {
+      session.status = { ...session.status, mode };
+      session.publisher.publish(session.status, session.binding);
+    }
+    this.emit({ kind: "mode", binding: session.binding });
+    return true;
   }
 
   view(guildId: string): { binding: CaptureBinding; status: CaptureStatus } | undefined {

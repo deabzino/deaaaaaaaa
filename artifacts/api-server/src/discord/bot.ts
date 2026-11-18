@@ -37,6 +37,7 @@ import { logger } from "../lib/logger";
 import { prisma } from "../lib/prisma";
 import { captureCommand, handleCaptureCommand } from "./captureStatus";
 import { CAPTURE_COLOUR_PICKER, handleCaptureLink, linkCommand, unlinkCommand } from "./captureLinks";
+import { evaluateMutes, registerCaptureMutes } from "./captureMutes";
 import { captureRegistry } from "../among-us/registry";
 import {
   handleNWordMessage,
@@ -1430,6 +1431,7 @@ export function startDiscordBot(): Client | null {
   });
   discordClient = client;
   registerServerLogger(client);
+  registerCaptureMutes(client, markVoiceChangeByBot);
 
   let statusInterval: NodeJS.Timeout | null = null;
 
@@ -1506,6 +1508,8 @@ export function startDiscordBot(): Client | null {
     if (pairedVoice && oldState.channelId !== newState.channelId &&
       (oldState.channelId === pairedVoice || newState.channelId === pairedVoice)) {
       captureRegistry.refresh(newState.guild.id);
+      // A joiner needs the right mute now, and someone who left needs theirs lifted.
+      evaluateMutes(newState.guild, true);
     }
     if (oldState.member?.id === client.user?.id && !newState.channelId) {
       activeConnections.delete(oldState.guild.id);
