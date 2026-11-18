@@ -4,7 +4,8 @@ const REGIONS = ["North America", "Asia", "Europe"];
 const MAPS = ["The Skeld", "MIRA HQ", "Polus", "dlekS", "The Airship", "The Fungle"];
 const PHASE_NAMES = { menu: "Waiting for a lobby", lobby: "Lobby", tasks: "Tasks", meeting: "Meeting", ended: "Ended" };
 
-export type CaptureMode = "Manual" | "Auto";
+// Paused keeps the capture connected but stops dea from changing any mutes until someone resumes Auto.
+export type CaptureMode = "Manual" | "Auto" | "Paused";
 
 export type CaptureStatus = {
   phase: string;
@@ -43,6 +44,12 @@ export class StatusProjection {
     this.last = next;
     if (game && game.phase !== "menu") this.active = true;
     return this.active ? this.render(game) : undefined;
+  }
+
+  // Players whose death a meeting has already announced. Unannounced deaths must never be listed.
+  deadAnnounced(): number[] {
+    const players = this.last?.game?.players ?? [];
+    return players.filter((player) => player.dead && this.disclosed.has(player.id)).map((player) => player.id);
   }
 
   waiting(): CaptureStatus {

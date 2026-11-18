@@ -16,6 +16,8 @@ export type CaptureLatest = {
   lastSeenAt: number;
   // Raw game state, including deaths nobody has reported yet. It is only for mute decisions.
   game: CaptureGame | null | undefined;
+  // Deaths a meeting has announced. Safe to show people, unlike `game`.
+  deadAnnounced: number[];
 };
 
 class StatusPublisher {
@@ -176,7 +178,10 @@ export class CaptureRegistry {
     const key = this.guildTokens.get(guildId);
     const session = key ? this.sessions.get(key) : undefined;
     if (!session) return undefined;
-    return { binding: session.binding, mode: session.mode, lastSeenAt: session.lastSeenAt, game: session.game };
+    return {
+      binding: session.binding, mode: session.mode, lastSeenAt: session.lastSeenAt, game: session.game,
+      deadAnnounced: session.projection.deadAnnounced(),
+    };
   }
 
   // Returns false when there is no paired capture to change.

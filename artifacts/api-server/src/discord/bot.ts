@@ -37,7 +37,9 @@ import { logger } from "../lib/logger";
 import { prisma } from "../lib/prisma";
 import { captureCommand, handleCaptureCommand } from "./captureStatus";
 import { CAPTURE_COLOUR_PICKER, handleCaptureLink, linkCommand, unlinkCommand } from "./captureLinks";
-import { evaluateMutes, registerCaptureMutes } from "./captureMutes";
+import {
+  CAPTURE_RESUME, CAPTURE_STAY_MANUAL, evaluateMutes, handleCaptureResume, pauseAutoForManual, registerCaptureMutes,
+} from "./captureMutes";
 import { captureRegistry } from "../among-us/registry";
 import {
   handleNWordMessage,
@@ -860,6 +862,9 @@ async function executeVoiceCommand(
     );
   });
 
+  // Automatic muting steps aside so it does not undo what this command is about to set.
+  const autoPaused = pauseAutoForManual(guild.id, channel.id);
+
   const result = await applyServerMute(
     guild,
     client.user!.id,
@@ -880,7 +885,8 @@ async function executeVoiceCommand(
       ? ` I couldn't change ${result.failed} member${result.failed === 1 ? "" : "s"}—check my role position and permissions.`
       : "";
 
-  return `${action} in **${channel.name}** (${stateNotice}).${failureNotice}`;
+  const pausedNotice = autoPaused ? " Automatic muting is paused. Use `/capture mode Auto` to resume it." : "";
+  return `${action} in **${channel.name}** (${stateNotice}).${failureNotice}${pausedNotice}`;
 }
 
 async function handleSlashCommand(
@@ -1431,7 +1437,10 @@ export function startDiscordBot(): Client | null {
   });
   discordClient = client;
   registerServerLogger(client);
-  registerCaptureMutes(client, markVoiceChangeByBot);
+  registerCaptureMutes(client, markVoiceChangeByBot, {
+    mark: (guild, memberId) => markDeadPlayer(client, guild, memberId),
+    clear: (guild, memberId) => clearDeadPlayers(guild, memberId),
+  });
 
   let statusInterval: NodeJS.Timeout | null = null;
 
@@ -1478,6 +1487,8 @@ export function startDiscordBot(): Client | null {
         }
       } else if (interaction.isStringSelectMenu() && interaction.customId === CAPTURE_COLOUR_PICKER) {
         await handleCaptureLink(interaction);
+      } else if (interaction.isButton() && (interaction.customId === CAPTURE_RESUME || interaction.customId === CAPTURE_STAY_MANUAL)) {
+        await handleCaptureResume(interaction);
       } else if (interaction.isButton()) {
         if (interaction.customId.startsWith("help_")) {
           const category = interaction.customId.replace(

@@ -13,9 +13,9 @@ export const captureCommand = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addSubcommand((command) => command.setName("pair").setDescription("Create a one-time Windows capture pairing code"))
   .addSubcommand((command) => command.setName("revoke").setDescription("Disconnect the capture app and revoke its credential"))
-  .addSubcommand((command) => command.setName("mode").setDescription("Turn automatic muting from the capture on or off")
-    .addStringOption((option) => option.setName("mode").setDescription("Auto follows the game; Manual does nothing automatically")
-      .setRequired(true).addChoices({ name: "Auto", value: "Auto" }, { name: "Manual", value: "Manual" })))
+  .addSubcommand((command) => command.setName("mode").setDescription("Turn automatic muting from the capture on, off or pause it")
+    .addStringOption((option) => option.setName("mode").setDescription("Auto follows the game; Pause stops it for now; Manual does nothing automatically")
+      .setRequired(true).addChoices({ name: "Auto", value: "Auto" }, { name: "Pause", value: "Pause" }, { name: "Manual", value: "Manual" })))
   .toJSON();
 
 export async function handleCaptureCommand(interaction: ChatInputCommandInteraction) {
@@ -32,13 +32,15 @@ export async function handleCaptureCommand(interaction: ChatInputCommandInteract
   }
 
   if (interaction.options.getSubcommand() === "mode") {
-    const mode = interaction.options.getString("mode", true) === "Auto" ? "Auto" : "Manual";
+    const choice = interaction.options.getString("mode", true);
+    const mode = choice === "Auto" ? "Auto" : choice === "Pause" ? "Paused" : "Manual";
     if (!captureRegistry.setMode(guild.id, mode)) {
       await interaction.editReply("There is no active capture pairing. Run /capture pair first.");
       return;
     }
     await interaction.editReply(
       mode === "Manual" ? "Mode is Manual. Capture events no longer change mutes, and any mutes I applied are being lifted."
+        : mode === "Paused" ? "Auto is paused. I'm lifting the mutes I applied and won't change any until you run /capture mode Auto."
         : muteDryRun() ? "Mode is Auto in dry-run. I'm only logging the mutes I would make, and nobody is muted yet."
           : "Mode is Auto. I will server-mute linked players automatically.",
     );
@@ -71,7 +73,7 @@ export async function handleCaptureCommand(interaction: ChatInputCommandInteract
       .setTitle("Among Us")
       .addFields(
         { name: "Phase", value: status.phase, inline: true },
-        { name: "Mode", value: status.mode === "Auto" && muteDryRun() ? "Auto (dry run)" : status.mode, inline: true },
+        { name: "Mode", value: status.mode === "Paused" ? "Auto (paused)" : status.mode === "Auto" && muteDryRun() ? "Auto (dry run)" : status.mode, inline: true },
         { name: "Voice channel", value: `<#${binding.voiceChannelId}>`, inline: true },
         { name: "Lobby code", value: status.lobby, inline: true },
         { name: "Region", value: status.region, inline: true },

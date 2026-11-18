@@ -15,7 +15,9 @@ const { outputFiles } = await build({
       export { MuteExecutor } from "./muteExecutor";
       export { CaptureRegistry, captureRegistry } from "./registry";
       export { renderCaptureLinks } from "../discord/captureLinks";
-      export { evaluateMutes, registerCaptureMutes, muteDryRun } from "../discord/captureMutes";
+      export {
+        evaluateMutes, registerCaptureMutes, muteDryRun, pauseAutoForManual, handleCaptureResume, CAPTURE_RESUME, CAPTURE_STAY_MANUAL,
+      } from "../discord/captureMutes";
       export { handleCaptureCommand } from "../discord/captureStatus";
     `,
     resolveDir: fileURLToPath(new URL(".", import.meta.url)),
@@ -31,6 +33,7 @@ new Function("module", "exports", "require", outputFiles[0].text)(module, module
 const {
   MuteTracker, MuteExecutor, CaptureRegistry, captureRegistry, renderCaptureLinks,
   evaluateMutes, registerCaptureMutes, muteDryRun, handleCaptureCommand,
+  pauseAutoForManual, handleCaptureResume, CAPTURE_RESUME, CAPTURE_STAY_MANUAL,
 } = module.exports;
 
 const until = async (predicate, message, timeout = 3_000) => {
@@ -295,15 +298,24 @@ function fakeServer(guildId, memberSpecs) {
     voiceStates: { cache: { get: (id) => voiceStates.get(id), values: () => voiceStates.values() } },
     members: { me: { permissions: { has: () => true } }, fetch: async (id) => voiceStates.get(id).member },
   };
-  const client = { guilds: { cache: { get: (id) => (id === guildId ? guild : undefined) } } };
+  const sent = [];
+  const client = {
+    guilds: { cache: { get: (id) => (id === guildId ? guild : undefined) } },
+    channels: { cache: { get: (id) => (id === "text" ? { isSendable: () => true, send: async (payload) => { sent.push(payload); } } : undefined) } },
+  };
+  const dead = {
+    marks: [], clears: [],
+    mark: async (target, memberId) => { dead.marks.push([target.id, memberId]); },
+    clear: async (target, memberId) => { dead.clears.push([target.id, memberId]); },
+  };
   const muted = () => [...voiceStates].filter(([, state]) => state.serverMute).map(([id]) => id).sort();
-  return { guild, client, voiceStates, log, muted };
+  return { guild, client, voiceStates, log, muted, sent, dead };
 }
 
 async function pairServer(server, context) {
   const binding = { guildId: server.guild.id, textChannelId: "text", voiceChannelId: "voice" };
   const embeds = [];
-  registerCaptureMutes(server.client, (guildId, userId) => server.log.botChanges.push([guildId, userId]));
+  registerCaptureMutes(server.client, (guildId, userId) => server.log.botChanges.push([guildId, userId]), server.dead);
   const code = captureRegistry.issue(binding, async (status, bound) => {
     const { roster } = await renderCaptureLinks(server.guild, bound, status);
     embeds.push({ phase: status.phase, mode: status.mode, roster });
@@ -409,7 +421,7 @@ test("dry run is the default and only ever logs", async (context) => {
   assert.deepEqual(server.muted(), []);
 });
 
-test("a quiet capture releases its mutes, and a returning capture re-applies them", async (context) => {
+test("a quiet capture falls back to Manual, and a returning capture asks before Auto resumes", async (context) => {
   process.env.CAPTURE_MUTE_DRY_RUN = "false";
   context.after(() => { delete process.env.CAPTURE_MUTE_DRY_RUN; });
   context.mock.timers.enable({ apis: ["setInterval", "Date"], now: 1_000_000 });
@@ -423,9 +435,180 @@ test("a quiet capture releases its mutes, and a returning capture re-applies the
 
   context.mock.timers.tick(36_000);
   await until(() => server.muted().length === 0, "a silent capture left people muted");
+  assert.equal(captureRegistry.latest("guild-quiet").mode, "Manual");
+  assert.equal(server.sent.length, 1);
+  assert.match(server.sent[0].content, /lost contact/);
+  assert.equal(server.sent[0].components, undefined);
 
+  // The capture returns: nothing is muted again by itself, and dea asks first.
   capture.send("tasks", roster());
-  await until(() => server.muted().length === 2, "mutes were not re-applied when the capture returned");
+  context.mock.timers.tick(5_000);
+  await delay(50);
+  assert.deepEqual(server.muted(), []);
+  assert.equal(server.sent.length, 2);
+  assert.match(server.sent[1].content, /Resume automatic muting/);
+  const buttons = server.sent[1].components[0].toJSON().components.map((button) => button.custom_id);
+  assert.deepEqual(buttons, [CAPTURE_RESUME, CAPTURE_STAY_MANUAL]);
+  context.mock.timers.tick(5_000);
+  await delay(20);
+  assert.equal(server.sent.length, 2, "it must only ask once");
+
+  // Someone without Manage Server cannot answer.
+  const press = (customId, allowed) => {
+    const result = {};
+    const interaction = {
+      customId, guild: { id: "guild-quiet" }, memberPermissions: { has: () => allowed },
+      reply: async (options) => { result.reply = options; },
+      update: async (options) => { result.update = options; },
+    };
+    return handleCaptureResume(interaction).then(() => result);
+  };
+  assert.match((await press(CAPTURE_RESUME, false)).reply.content, /Manage Server/);
+  assert.equal(captureRegistry.latest("guild-quiet").mode, "Manual");
+
+  const answer = await press(CAPTURE_RESUME, true);
+  assert.match(answer.update.content, /resumed/);
+  assert.equal(captureRegistry.latest("guild-quiet").mode, "Auto");
+  await until(() => server.muted().length === 2, "mutes were not applied after resuming");
+});
+
+test("staying in Manual after a lost capture keeps Auto off", async (context) => {
+  context.mock.timers.enable({ apis: ["setInterval", "Date"], now: 2_000_000 });
+  const server = fakeServer("guild-stay", [{ id: "u-orbit", name: "Orbit" }]);
+  const capture = await pairServer(server, context);
+  capture.send("lobby", roster());
+  await until(() => capture.embeds.length > 0, "the status never rendered");
+  captureRegistry.setMode("guild-stay", "Auto");
+  context.mock.timers.tick(36_000);
+  assert.equal(captureRegistry.latest("guild-stay").mode, "Manual");
+  capture.send("tasks", roster());
+  context.mock.timers.tick(5_000);
+  await delay(20);
+  assert.equal(server.sent.length, 2);
+  const result = {};
+  await handleCaptureResume({
+    customId: CAPTURE_STAY_MANUAL, guild: { id: "guild-stay" }, memberPermissions: { has: () => true },
+    update: async (options) => { result.update = options; },
+  });
+  assert.match(result.update.content, /Staying in Manual/);
+  assert.equal(captureRegistry.latest("guild-stay").mode, "Manual");
+});
+
+test("a manual mute pauses Auto without undoing what the command set", async (context) => {
+  process.env.CAPTURE_MUTE_DRY_RUN = "false";
+  context.after(() => { delete process.env.CAPTURE_MUTE_DRY_RUN; });
+  const server = fakeServer("guild-pause", [{ id: "u-orbit", name: "Orbit" }, { id: "u-pixel", name: "Pixel" }]);
+  const capture = await pairServer(server, context);
+  capture.send("lobby", roster());
+  await until(() => capture.embeds.length > 0, "the status never rendered");
+  captureRegistry.setMode("guild-pause", "Auto");
+  capture.send("tasks", roster());
+  await until(() => server.muted().length === 2, "players were not muted");
+
+  assert.equal(pauseAutoForManual("guild-pause", "another-channel"), false);
+  assert.equal(captureRegistry.latest("guild-pause").mode, "Auto");
+  assert.equal(pauseAutoForManual("guild-pause", "voice"), true);
+  assert.equal(captureRegistry.latest("guild-pause").mode, "Paused");
+  assert.equal(pauseAutoForManual("guild-pause", "voice"), false, "only Auto can be paused");
+
+  // The game moves on, but the mutes the person set stay exactly as they are.
+  capture.send("ended", roster());
+  await delay(100);
+  assert.deepEqual(server.muted(), ["u-orbit", "u-pixel"]);
+  assert.equal(server.log.mutes.filter(([, mute]) => !mute).length, 0);
+});
+
+test("/capture mode pause lifts dea's mutes and stops further changes until Auto is back", async (context) => {
+  process.env.CAPTURE_MUTE_DRY_RUN = "false";
+  context.after(() => { delete process.env.CAPTURE_MUTE_DRY_RUN; });
+  const server = fakeServer("guild-pausecmd", [{ id: "u-orbit", name: "Orbit" }]);
+  const capture = await pairServer(server, context);
+  capture.send("lobby", roster());
+  await until(() => capture.embeds.length > 0, "the status never rendered");
+  captureRegistry.setMode("guild-pausecmd", "Auto");
+  capture.send("tasks", roster());
+  await until(() => server.muted().length === 1, "the player was not muted");
+
+  let reply;
+  await handleCaptureCommand({
+    user: { id: "operator" }, memberPermissions: { has: () => true },
+    guild: { id: "guild-pausecmd", voiceStates: { cache: { get: () => undefined, values: () => [] } }, members: { me: {} } },
+    channel: {}, options: { getSubcommand: () => "mode", getString: () => "Pause" },
+    deferReply: async () => {}, editReply: async (text) => { reply = text; },
+  });
+  assert.match(reply, /paused/i);
+  assert.equal(captureRegistry.latest("guild-pausecmd").mode, "Paused");
+  await until(() => server.muted().length === 0, "pausing did not lift the mutes");
+  capture.send("meeting", roster());
+  capture.send("tasks", roster());
+  await delay(100);
+  assert.deepEqual(server.muted(), []);
+  await until(() => capture.embeds.at(-1)?.mode === "Paused", "the status never showed Paused");
+});
+
+test("announced deaths go on the dead list, hidden ones never do, and the round end clears them", async (context) => {
+  process.env.CAPTURE_MUTE_DRY_RUN = "false";
+  context.after(() => { delete process.env.CAPTURE_MUTE_DRY_RUN; });
+  const server = fakeServer("guild-dead", [{ id: "u-orbit", name: "Orbit" }, { id: "u-pixel", name: "Pixel" }]);
+  const capture = await pairServer(server, context);
+  capture.send("lobby", roster());
+  await until(() => capture.embeds.length > 0, "the status never rendered");
+  captureRegistry.setMode("guild-dead", "Auto");
+  capture.send("tasks", roster());
+  capture.send("tasks", roster({ orbit: { dead: true } }));
+  await delay(100);
+  assert.deepEqual(server.dead.marks, [], "an unannounced death must not reach the dead list");
+
+  capture.send("meeting", roster({ orbit: { dead: true } }));
+  await until(() => server.dead.marks.length === 1, "the announced death was not listed");
+  assert.deepEqual(server.dead.marks, [["guild-dead", "u-orbit"]]);
+  capture.send("tasks", roster({ orbit: { dead: true } }));
+  capture.send("meeting", roster({ orbit: { dead: true } }));
+  await delay(100);
+  assert.equal(server.dead.marks.length, 1, "a death is only listed once");
+  assert.deepEqual(server.dead.clears, []);
+
+  capture.send("ended", roster({ orbit: { dead: true } }));
+  await until(() => server.dead.clears.length === 1, "the dead list was not cleared at the end of the round");
+  assert.deepEqual(server.dead.clears, [["guild-dead", "u-orbit"]]);
+});
+
+test("dry run never touches the dead list, and leaving Auto takes only dea's entries off it", async (context) => {
+  delete process.env.CAPTURE_MUTE_DRY_RUN;
+  const dry = fakeServer("guild-dead-dry", [{ id: "u-orbit", name: "Orbit" }]);
+  const dryCapture = await pairServer(dry, context);
+  dryCapture.send("lobby", roster());
+  await until(() => dryCapture.embeds.length > 0, "the status never rendered");
+  captureRegistry.setMode("guild-dead-dry", "Auto");
+  dryCapture.send("tasks", roster());
+  dryCapture.send("meeting", roster({ orbit: { dead: true } }));
+  await delay(100);
+  assert.deepEqual(dry.dead.marks, []);
+  assert.deepEqual(dry.dead.clears, []);
+
+  process.env.CAPTURE_MUTE_DRY_RUN = "false";
+  context.after(() => { delete process.env.CAPTURE_MUTE_DRY_RUN; });
+  const live = fakeServer("guild-dead-off", [{ id: "u-orbit", name: "Orbit" }]);
+  const capture = await pairServer(live, context);
+  capture.send("lobby", roster());
+  await until(() => capture.embeds.length > 0, "the status never rendered");
+  captureRegistry.setMode("guild-dead-off", "Auto");
+  capture.send("tasks", roster());
+  capture.send("meeting", roster({ orbit: { dead: true } }));
+  await until(() => live.dead.marks.length === 1, "the death was not listed");
+  captureRegistry.setMode("guild-dead-off", "Manual");
+  await until(() => live.dead.clears.length === 1, "leaving Auto did not take dea's entries off the dead list");
+});
+
+test("forget stops tracking without lifting anything", async () => {
+  const ops = fakeOps({ a: member(), b: member() });
+  const executor = new MuteExecutor({ ops, dryRun: false });
+  await executor.apply(target({ a: true, b: true }));
+  executor.forget();
+  assert.deepEqual(executor.ownedIds(), []);
+  assert.equal(executor.isEmpty, true);
+  await executor.release();
+  assert.deepEqual(ops.calls, [["a", true], ["b", true]]);
 });
 
 test("/capture mode switches automatic muting and tells the operator about dry run", async (context) => {

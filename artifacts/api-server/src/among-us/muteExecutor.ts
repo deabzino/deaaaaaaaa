@@ -77,6 +77,20 @@ export class MuteExecutor {
     return this.kick();
   }
 
+  // Stops tracking without touching Discord. Used when a person has taken over the mutes by hand,
+  // so a later release cannot undo what they just did.
+  forget(): void {
+    this.desired = new Map();
+    this.signature = undefined;
+    this.failures.clear();
+    this.owned.clear();
+    this.simulated.clear();
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+  }
+
   private kick(): Promise<void> {
     if (this.running) {
       this.dirty = true;
