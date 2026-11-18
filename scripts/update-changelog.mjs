@@ -15,12 +15,18 @@ if (!before || before === after) process.exit(0);
 
 let commits;
 let changedFiles;
+let changes;
 try {
   const output = execFileSync("git", ["log", "--reverse", "--format=%H%x00%cI%x00%s", `${before}..${after}`], { encoding: "utf8" });
   const values = output.trim().split("\n").flatMap((line) => line.split("\0")).map((value) => value.trim()).filter(Boolean);
   commits = [];
   for (let index = 0; index + 2 < values.length; index += 3) commits.push({ hash: values[index], date: values[index + 1], subject: values[index + 2] });
-  changedFiles = execFileSync("git", ["diff", "--name-only", before, after], { encoding: "utf8" }).split(/\r?\n/).filter(Boolean);
+  changes = execFileSync("git", ["diff", "--name-status", "--no-renames", before, after], { encoding: "utf8" })
+    .split(/\r?\n/).filter(Boolean).map((line) => {
+      const [status, ...rest] = line.split("\t");
+      return { status: status[0], file: rest.join("\t") };
+    });
+  changedFiles = changes.map(({ file }) => file);
 } catch (error) {
   console.error("Could not read the pushed commits for the changelog.", error);
   process.exit(1);
@@ -29,29 +35,41 @@ try {
 if (!commits.length) process.exit(0);
 
 const areas = new Map();
-const addArea = (key) => {
+const addArea = (key, status) => {
   if (!areas.has(key)) areas.set(key, []);
+  areas.get(key).push(status);
 };
-for (const file of changedFiles) {
-  if (file.startsWith("artifacts/api-server/web/") && !file.endsWith("/changelog.json")) addArea("website");
-  else if (/artifacts\/api-server\/src\/discord\/(serverLogger|voiceLogBatcher|logFormatting)/.test(file)) addArea("activity");
-  else if (/artifacts\/api-server\/src\/discord\/(bot|commandCatalog)/.test(file)) addArea("commands");
-  else if (file.startsWith("artifacts/api-server/src/discord/")) addArea("discord");
-  else if (file.startsWith("artifacts/api-server/src/")) addArea("service");
+for (const { file, status } of changes) {
+  if (file.startsWith("artifacts/among-us-capture/") || file.startsWith("artifacts/api-server/src/among-us/") ||
+    /artifacts\/api-server\/src\/discord\/capture/.test(file)) addArea("automatic", status);
+  else if (file.startsWith("artifacts/api-server/web/") && !file.endsWith("/changelog.json")) addArea("website", status);
+  else if (/artifacts\/api-server\/src\/discord\/(serverLogger|voiceLogBatcher|logFormatting)/.test(file)) addArea("activity", status);
+  else if (/artifacts\/api-server\/src\/discord\/(bot|commandCatalog)/.test(file)) addArea("commands", status);
+  else if (file.startsWith("artifacts/api-server/src/discord/")) addArea("discord", status);
+  else if (file.startsWith("artifacts/api-server/src/")) addArea("service", status);
 }
 
 const otherProjectFiles = changedFiles.filter((file) => file !== changelogPath && file !== statePath &&
   !file.startsWith(".github/") && !file.startsWith("scripts/"));
-if (!areas.size && otherProjectFiles.length) addArea("service");
+if (!areas.size && otherProjectFiles.length) addArea("service", "M");
 if (!areas.size) process.exit(0);
 
 const latest = commits.at(-1);
 const date = new Date(latest.date).toISOString();
 const subjects = commits.map(({ subject }) => subject.toLowerCase());
-const type = subjects.some((subject) => /\b(remove|removed|delete|deleted)\b/.test(subject)) ? "Removed"
+const subjectType = subjects.some((subject) => /\b(remove|removed|delete|deleted)\b/.test(subject)) ? "Removed"
   : subjects.some((subject) => /\b(fix|fixed|repair|bug)\b/.test(subject)) ? "Fixed"
     : subjects.some((subject) => /\b(add|added|new|feat|feature)\b/.test(subject)) ? "Added" : "Improved";
+// An area where files were only deleted is reported as removed, whatever the commit messages say.
+const typeFor = (statuses) => statuses.every((status) => status === "D") ? "Removed" : subjectType;
 const copy = {
+  automatic: {
+    title: "Automatic Among Us muting",
+    Added: "Automatic mode can follow your Among Us game and handle voice mutes for you.",
+    Improved: "Automatic mode is smoother and more dependable.",
+    Fixed: "Automatic mode works more reliably during a round.",
+    Removed: "Unneeded automatic mode behavior has been removed.",
+  },
   website: {
     title: "A smoother dea website",
     Added: "New details make the dea website more useful for your crew.",
@@ -89,7 +107,7 @@ const copy = {
   },
 };
 
-const changes = [...areas.keys()].map((area) => ({ type, text: copy[area][type] }));
+const entryChanges = [...areas].map(([area, statuses]) => ({ type: typeFor(statuses), text: copy[area][typeFor(statuses)] }));
 const title = areas.size === 1 ? copy[areas.keys().next().value].title : "More updates for your crew";
 const existingJson = await readFile(changelogPath, "utf8");
 const entries = JSON.parse(existingJson);
@@ -98,7 +116,7 @@ if (entries.some((entry) => Date.parse(entry.date) >= Date.parse(date))) {
   process.exit(0);
 }
 
-const entry = { date, title, changes };
+const entry = { date, title, changes: entryChanges };
 const updatedJson = existingJson.replace(/^\s*\[/, `[\n  ${JSON.stringify(entry)},`);
 await writeFile(changelogPath, updatedJson, "utf8");
 await writeFile(statePath, `${JSON.stringify({ lastProcessed: after }, null, 2)}\n`, "utf8");
