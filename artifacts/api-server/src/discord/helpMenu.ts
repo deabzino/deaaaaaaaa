@@ -57,6 +57,20 @@ export function getHelpEmbed(
             value:
               "> `/code [code]` • `.code [code]`\n> *Saves or recalls the 6-letter lobby code. Standalone uppercase 6-letter codes are automatically detected.*",
           },
+          {
+            name: "Automatic Capture (Windows app)",
+            value: [
+              "> `/capture pair`",
+              "> *Makes a one-time code for the Windows capture app. Needs Manage Server.*",
+              "> `/capture mode <Auto|Pause|Manual>`",
+              "> *Auto mutes and unmutes by game phase. Pause stops it for now. Manual does nothing automatically.*",
+              "> `/capture revoke`",
+              "> *Disconnects the capture app.*",
+              "> `/link <@player> <colour>` • `/unlink [@player]`",
+              "> *Links a member to an Among Us colour, or forgets their saved names.*",
+              "> *A manual `/mute` or `/unmute` pauses Auto. If the capture drops for 30 seconds, dea switches to Manual and asks before resuming.*",
+            ].join("\n"),
+          },
         );
 
     case "counter":
@@ -127,7 +141,7 @@ export function getHelpEmbed(
         .addFields(
           {
             name: "Among Us & Voice Controls",
-            value: "> Automatic VC joining, discussion mute/unmute rounds, dead-player tracking, and lobby codes.",
+            value: "> Automatic VC joining, discussion mute/unmute rounds, dead-player tracking, lobby codes, and automatic muting from the Windows capture app.",
           },
           {
             name: "Automated Slur Counter",
