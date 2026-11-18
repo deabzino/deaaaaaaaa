@@ -64,15 +64,15 @@ const subjectType = subjects.some((subject) => /\b(remove|removed|delete|deleted
 const typeFor = (statuses) => statuses.every((status) => status === "D") ? "Removed" : subjectType;
 const copy = {
   automatic: {
-    title: "Automatic Among Us muting",
-    Added: "Automatic mode can follow your Among Us game and handle voice mutes for you.",
+    title: "Automatic voice muting",
+    Added: "Automatic mode can follow your game and handle voice mutes for you.",
     Improved: "Automatic mode is smoother and more dependable.",
-    Fixed: "Automatic mode works more reliably during a round.",
+    Fixed: "Automatic mode works more reliably.",
     Removed: "Unneeded automatic mode behavior has been removed.",
   },
   website: {
     title: "A smoother dea website",
-    Added: "New details make the dea website more useful for your crew.",
+    Added: "New details make the dea website more useful for your server.",
     Improved: "The dea website is clearer and easier to browse.",
     Fixed: "The dea website works more smoothly and reliably.",
     Removed: "Unneeded website details have been removed for a clearer experience.",
@@ -86,14 +86,14 @@ const copy = {
   },
   commands: {
     title: "More useful Discord commands",
-    Added: "New command features give your crew more ways to manage a round.",
+    Added: "New command features give your server more ways to manage voice chat.",
     Improved: "Discord commands are clearer and easier to use.",
-    Fixed: "Discord commands work more reliably for your crew.",
-    Removed: "Commands your crew no longer needs have been removed.",
+    Fixed: "Discord commands work more reliably for your server.",
+    Removed: "Commands your server no longer needs have been removed.",
   },
   discord: {
     title: "More from dea in Discord",
-    Added: "New Discord features help your crew manage rounds together.",
+    Added: "New Discord features help your server stay organized.",
     Improved: "dea's Discord features are easier to use.",
     Fixed: "dea's Discord features work more reliably.",
     Removed: "Unneeded Discord behavior has been removed.",
@@ -108,7 +108,7 @@ const copy = {
 };
 
 const entryChanges = [...areas].map(([area, statuses]) => ({ type: typeFor(statuses), text: copy[area][typeFor(statuses)] }));
-const title = areas.size === 1 ? copy[areas.keys().next().value].title : "More updates for your crew";
+const title = areas.size === 1 ? copy[areas.keys().next().value].title : "More updates for your server";
 const existingJson = await readFile(changelogPath, "utf8");
 const entries = JSON.parse(existingJson);
 if (entries.some((entry) => Date.parse(entry.date) >= Date.parse(date))) {

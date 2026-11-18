@@ -20,10 +20,11 @@
   let category = new URLSearchParams(location.search).get("category") || "all";
   let mode = "all";
   let query = "";
-  const categories = ["All", "Among Us & voice", "Utility", "Server logging"];
+  const categories = ["All", "Manual controls", "Automatic mode", "Utility", "Server logging"];
   const slug = (value) => value.toLowerCase().replaceAll("&", "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const categoryIcon = (name) => ({
-    "Among Us & voice": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13v-2a8 8 0 0 1 16 0v2M4 13H3a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h3v-8H4Zm16 0h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-3v-8h2ZM8 20h4"/></svg>',
+    "Automatic mode": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z"/></svg>',
+    "Manual controls": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13v-2a8 8 0 0 1 16 0v2M4 13H3a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h3v-8H4Zm16 0h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-3v-8h2ZM8 20h4"/></svg>',
     Utility: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="11" cy="18" r="2"/></svg>',
     "Server logging": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5h12M8 12h12M8 19h12"/><circle cx="4" cy="5" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="19" r="1"/></svg>',
   }[name] || '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.6 2.6 0 1 1 4.6 1.7c-1.3 1.1-2.1 1.5-2.1 3.3M12 17.5h.01"/></svg>');
