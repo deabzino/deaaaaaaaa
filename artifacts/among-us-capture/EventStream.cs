@@ -9,15 +9,29 @@ sealed record Change(string Kind, int? PlayerId = null);
 sealed record CaptureEvent(int ProtocolVersion, string StreamId, long Sequence, Snapshot? Game,
     IReadOnlyList<Change> Changes);
 
-sealed class EventStream(TextWriter output)
+sealed class EventStream(Action<CaptureEvent> publish)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    public EventStream(TextWriter output) : this(snapshot =>
+    {
+        output.WriteLine(JsonSerializer.Serialize(snapshot, JsonOptions));
+        output.Flush();
+    }) {}
+
     private Snapshot? previous;
     private long sequence;
     private readonly string streamId = Guid.NewGuid().ToString("N");
 
     public void Send(Snapshot? current)
     {
+        if (previous is { } last && current is { } game &&
+            last.Phase == game.Phase && last.LobbyCode == game.LobbyCode &&
+            last.RegionId == game.RegionId && last.MapId == game.MapId &&
+            last.Players.Length == game.Players.Length &&
+            last.Players.Zip(game.Players).All(pair =>
+                pair.First with { IsImpostor = null } == pair.Second with { IsImpostor = null }))
+            return;
+
         var changes = new List<Change>();
         if (previous?.Phase != current?.Phase)
             changes.Add(new(current is null ? "captureLost" : "phaseChanged"));
@@ -48,8 +62,7 @@ sealed class EventStream(TextWriter output)
                 changes.Add(new("playerLeft", player.Id));
 
         var envelope = new CaptureEvent(1, streamId, ++sequence, current, changes);
-        output.WriteLine(JsonSerializer.Serialize(envelope, JsonOptions));
-        output.Flush();
+        publish(envelope);
         previous = current;
     }
 

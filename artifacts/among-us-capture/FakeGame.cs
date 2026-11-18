@@ -2,36 +2,42 @@ using System.Text.Json;
 
 static class FakeGame
 {
-    public static void Replay(EventStream stream)
+    public static async Task ReplayAsync(EventStream stream, TimeSpan delay = default, CancellationToken stop = default)
     {
-        var red = new Player(1, "Pixel", 0, false, false, true);
-        var blue = new Player(2, "Orbit", 1, false, false, false);
+        var purple = new Player(1, "Pixel", 8, false, false, true);
+        var black = new Player(2, "Orbit", 6, false, false, false);
         var green = new Player(3, "Moss", 2, false, false, null);
-        var lime = red with { Colour = 11 };
-        var ghost = blue with { Dead = true };
+        var lime = purple with { Colour = 11 };
+        var ghost = black with { Dead = true };
 
-        stream.Send(new("menu", null, null, null, []));
-        Send("lobby", red, blue);
-        Send("lobby", lime, blue, green);
-        Send("lobby", lime, blue);
-        Send("tasks", lime, blue);
-        Send("tasks", lime, ghost);
-        Send("meeting", lime, ghost);
-        Send("tasks", lime, ghost);
-        Send("ended", lime, ghost);
-        Send("lobby", lime, blue);
+        await Emit(new("menu", null, null, null, []));
+        await Send("lobby", purple, black);
+        await Send("lobby", lime, black, green);
+        await Send("lobby", lime, black);
+        await Send("tasks", lime, black);
+        await Send("tasks", lime, ghost);
+        await Send("meeting", lime, ghost);
+        await Send("tasks", lime, ghost);
+        await Send("ended", lime, ghost);
+        await Send("lobby", lime, black);
         stream.Lost();
         stream.Lost();
-        Send("lobby", lime, blue);
+        await Task.Delay(delay, stop);
+        await Send("lobby", lime, black);
 
-        void Send(string phase, params Player[] players) =>
-            stream.Send(new(phase, "ABCDEF", 0, 0, players));
+        Task Send(string phase, params Player[] players) => Emit(new(phase, "ABCDEF", 0, 0, players));
+
+        async Task Emit(Snapshot snapshot)
+        {
+            stream.Send(snapshot);
+            await Task.Delay(delay, stop);
+        }
     }
 
     public static void Test()
     {
         using var output = new StringWriter();
-        Replay(new EventStream(output));
+        ReplayAsync(new EventStream(output)).GetAwaiter().GetResult();
         var events = output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
             .Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
         var expected = new[] { "menu", "lobby", "lobby", "lobby", "tasks", "tasks", "meeting",
