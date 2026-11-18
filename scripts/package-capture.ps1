@@ -20,5 +20,5 @@ Set-Content -Path (Join-Path $stage "Start dea capture.bat") -Value $launcher -E
 
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
 Write-Host "`nBuilt $zip"
-Write-Host "Publish it with:"
-Write-Host "  gh release create capture-v0.1.0 `"$zip`" --title `"dea capture 0.1.0`" --notes `"Windows capture app (beta)`""
+Write-Host "Create a private draft release (only repo collaborators can download it):"
+Write-Host "  gh release create capture-v0.1.0 `"$zip`" --repo deabzino/deaaaaaaaa --draft --title `"dea capture 0.1.0`" --notes `"Windows capture app (beta)`""
