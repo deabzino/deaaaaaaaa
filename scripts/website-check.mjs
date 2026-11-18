@@ -43,7 +43,7 @@ try {
 
   for (const route of ["/", "/commands", "/changelog", "/status", "/404.html"]) {
     const html = await (await fetch(`${base}${route}`)).text();
-    assert.ok(html.indexOf('id="theme-bootstrap"') < html.indexOf('href="/site.css?v=8"'), `${route} applies theme before CSS`);
+    assert.ok(html.indexOf('id="theme-bootstrap"') < html.indexOf('href="/site.css?v=9"'), `${route} applies theme before CSS`);
   }
 
   for (const [route, title] of [["/", "dea"], ["/commands", "Commands"], ["/changelog", "Changelog"], ["/status", "System status"]]) {
