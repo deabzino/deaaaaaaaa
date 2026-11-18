@@ -88,7 +88,7 @@
         } catch (e) {}
       })();
     </script>
-    <link rel="stylesheet" href="/site.css?v=6" />
+    <link rel="stylesheet" href="/site.css?v=7" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -206,24 +206,53 @@
         </div>
       </section>
       <section id="automatic" class="section shell">
-        <div class="section-heading reveal">
-          <span class="eyebrow">AUTOMATIC MODE · BETA</span>
-          <h2>Let the game<br /><span>run the voice chat.</span></h2>
-          <p>
-            A small Windows app reads your Among Us lobby, and dea mutes and
-            unmutes the voice channel for you.
-          </p>
-          <p>
-            Everyone is muted during tasks, unmuted for meetings, and dead
-            players stay quiet, so a mute never gives away who died. Players
-            link to their Discord names automatically, you can pause or switch
-            back to manual at any time, and if the connection drops dea steps
-            back to manual and asks before resuming. Automatic mode is in
-            private beta, for Windows only.
-          </p>
-          <p>
-            <a class="button secondary" href="/commands">See the commands</a>
-          </p>
+        <div class="auto-layout">
+          <div class="section-heading reveal">
+            <span class="eyebrow">AUTOMATIC MODE · BETA</span>
+            <h2>Let the game<br /><span>run the voice chat.</span></h2>
+            <p>
+              A small Windows app reads your Among Us lobby, and dea mutes and
+              unmutes the voice channel for you.
+            </p>
+            <p>
+              Players link to their Discord names automatically. You can pause
+              or switch back to manual at any time, and if the connection drops
+              dea steps back to manual and asks before resuming. Automatic mode
+              is in private beta, for Windows only.
+            </p>
+            <p>
+              <a class="button secondary" href="/commands">See the commands</a>
+            </p>
+          </div>
+          <div class="auto-card reveal">
+            <div class="auto-card-top">
+              <b>What dea does each phase</b><span class="auto-pill">AUTO</span>
+            </div>
+            <ul class="auto-steps">
+              <li>
+                <span class="auto-phase">Lobby</span
+                ><span class="auto-state">Everyone can talk.</span>
+              </li>
+              <li>
+                <span class="auto-phase">Tasks</span
+                ><span class="auto-state">Everyone is muted.</span>
+              </li>
+              <li>
+                <span class="auto-phase">Meeting</span
+                ><span class="auto-state"
+                  >Alive players talk. Dead players stay muted.</span
+                >
+              </li>
+              <li>
+                <span class="auto-phase">Ended</span
+                ><span class="auto-state">Everyone can talk again.</span>
+              </li>
+            </ul>
+            <p class="auto-foot">
+              Everyone is muted during tasks, so a mute never gives away who
+              died.
+            </p>
+          </div>
         </div>
       </section>
       <section class="section demo-section shell">
