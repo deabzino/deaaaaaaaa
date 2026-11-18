@@ -1,0 +1,129 @@
+{
+  "Description": "v19s (build num: 7489)",
+  "AmongUsClientOffset": 54556864,
+  "GameDataOffset": 54832968,
+  "MeetingHudOffset": 54566136,
+  "GameStartManagerOffset": 55124264,
+  "HudManagerOffset": 55125528,
+  "ServerManagerOffset": 55132440,
+  "TempDataOffset": 54782864,
+  "GameOptionsOffset": 54836984,
+  "MeetingHudPtr": [
+    54566136,
+    184,
+    0
+  ],
+  "MeetingHudCachePtrOffsets": [
+    16
+  ],
+  "MeetingHudStateOffsets": [
+    224
+  ],
+  "GameStateOffsets": [
+    54556864,
+    184,
+    0,
+    172
+  ],
+  "AllPlayerPtrOffsets": [
+    54832968,
+    184,
+    0,
+    32
+  ],
+  "AllPlayersOffsets": [
+    16
+  ],
+  "PlayerCountOffsets": [
+    24
+  ],
+  "ExiledPlayerIdOffsets": [
+    54566136,
+    184,
+    0,
+    248,
+    56
+  ],
+  "RawGameOverReasonOffsets": [
+    54782864,
+    184,
+    16
+  ],
+  "WinningPlayersPtrOffsets": [
+    54782864,
+    184,
+    0
+  ],
+  "WinningPlayersOffsets": [
+    16
+  ],
+  "WinningPlayerCountOffsets": [
+    24
+  ],
+  "GameCodeOffsets": [
+    55124264,
+    184,
+    0,
+    112,
+    224
+  ],
+  "PlayRegionOffsets": [
+    55132440,
+    184,
+    0,
+    40,
+    16,
+    16
+  ],
+  "PlayMapOffsets": [
+    54836984,
+    184,
+    0,
+    40,
+    28
+  ],
+  "StringOffsets": [
+    16,
+    20
+  ],
+  "AddPlayerPtr": 8,
+  "PlayerListPtr": 32,
+  "PlayerInfoStructOffsets": {
+    "PlayerIDOffset": 56,
+    "FriendCodeOffset": 64,
+    "OutfitsOffset": [
+      88,
+      24,
+      48
+    ],
+    "PlayerLevelOffset": 96,
+    "DisconnectedOffset": 100,
+    "RoleTypeOffset": [
+      104,
+      32
+    ],
+    "RoleTeamTypeOffset": [
+      104,
+      116
+    ],
+    "TasksOffset": 112,
+    "IsDeadOffset": 120,
+    "ObjectOffset": 128
+  },
+  "WinningPlayerDataStructOffsets": {
+    "PlayerNameOffset": 16,
+    "OutfitOffset": 24,
+    "IsYouOffset": 32,
+    "IsImposterOffset": 33,
+    "IsDeadOffset": 34
+  },
+  "PlayerOutfitStructOffsets": {
+    "ColorIDOffset": 16,
+    "HatIDOffset": 24,
+    "PetIDOffset": 32,
+    "SkinIDOffset": 40,
+    "VisorIDOffset": 48,
+    "NamePlateIDOffset": 56,
+    "PlayerNameOffset": 64
+  }
+}
