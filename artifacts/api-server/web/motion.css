@@ -64,3 +64,16 @@
   .m,.wi{opacity:1!important;transform:none!important}
   .scroll-progress{display:none}
 }
+
+/* header and footer: no divider lines, no tinted footer band */
+.site-nav{border-bottom-color:transparent}
+.site-footer{border-top-color:transparent;background:transparent}
+.footer-bottom{border-top-color:transparent}
+
+/* scrollbar: slim, accent-tinted thumb on the page background */
+html{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--accent) 34%,var(--bg)) var(--bg)}
+@supports not (scrollbar-color:auto){
+  html::-webkit-scrollbar{width:10px}
+  html::-webkit-scrollbar-track{background:var(--bg)}
+  html::-webkit-scrollbar-thumb{border:2px solid var(--bg);border-radius:999px;background:color-mix(in srgb,var(--accent) 34%,var(--bg))}
+}
