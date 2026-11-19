@@ -1,0 +1,66 @@
+/* Motion only. It adds movement to the existing look and changes no colours, fonts or panel styles.
+   Anything that needs JS is gated on .motion, which motion.js sets. */
+:root{--ease-out:cubic-bezier(.2,.85,.25,1);--spring:cubic-bezier(.34,1.56,.64,1)}
+
+.scroll-progress{position:fixed;z-index:60;top:0;left:0;right:0;height:3px;background:var(--accent);transform-origin:0 50%;transform:scaleX(var(--p,0));pointer-events:none}
+
+/* headline words rise out of a mask, one after another */
+.w{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.14em;margin-bottom:-.14em}
+/* the old stylesheet colours every span in a headline, so the wrappers must just inherit */
+.hero-copy h1 .w,.hero-copy h1 .wi,.page-heading h1 .w,.page-heading h1 .wi,.not-found h1 .w,.not-found h1 .wi{color:inherit}
+.wi{display:inline-block}
+.motion .wi{transform:translateY(110%);transform-origin:0 100%}
+.motion .is-in .wi{transform:none;transition:transform .85s var(--ease-out) calc(var(--i) * 55ms + 80ms)}
+
+/* things below the fold arrive as they scroll into view (slide and fade only, so layout never shifts) */
+.motion .m{opacity:0;transition:opacity .5s ease calc(var(--d,0) * 70ms),transform .8s var(--spring) calc(var(--d,0) * 70ms)}
+.motion .m-up{transform:translateY(26px)}
+.motion .m-pop{transform:translateY(34px)}
+.motion .m-in{opacity:1;transform:none}
+
+/* first load on every page */
+.motion .hero-copy>p,.motion .hero-actions,.motion .hero-note,.motion .page-heading>p,.motion .not-found>p,.motion .not-found>.button{animation:fade-rise .8s var(--ease-out) both;animation-delay:.45s}
+.motion .hero-actions{animation-delay:.6s}
+.motion .hero-note{animation-delay:.75s}
+.motion .hero-art{animation:card-drop .9s var(--spring) both;animation-delay:.3s}
+@keyframes fade-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes card-drop{from{opacity:0;transform:translateY(44px)}to{opacity:1;transform:none}}
+
+/* rendered lists stagger in each time they are rebuilt */
+.motion .command-card{animation:card-in .55s var(--spring) both;animation-delay:calc(min(var(--i,0),18) * 28ms)}
+.motion .timeline-entry{animation:card-in .6s var(--spring) both;animation-delay:calc(min(var(--i,0),10) * 60ms)}
+@keyframes card-in{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+
+/* hero voice card: whoever can talk during a meeting gets a little equalizer */
+.voice-card{transition:transform .5s var(--ease-out)}
+.motion .voice-player .player-avatar{transition:transform .5s var(--spring)}
+.motion .voice-card[data-voice-state="meeting"] .voice-player:not(.dead-player) .player-avatar{transform:scale(1.08)}
+.motion .voice-card[data-voice-state="meeting"] .voice-player:not(.dead-player) .player-name::after{content:"";display:inline-block;width:20px;height:14px;margin-left:10px;vertical-align:-2px;
+  background:linear-gradient(var(--accent),var(--accent)) 0 100%/3px 40% no-repeat,linear-gradient(var(--accent),var(--accent)) 7px 100%/3px 90% no-repeat,linear-gradient(var(--accent),var(--accent)) 14px 100%/3px 60% no-repeat;
+  border-radius:2px;animation:eq 1s ease-in-out infinite}
+.motion .voice-card[data-voice-state="meeting"] .voice-player:nth-child(2n):not(.dead-player) .player-name::after{animation-duration:.8s;animation-delay:-.3s}
+@keyframes eq{
+  0%,100%{background-size:3px 30%,3px 85%,3px 50%}
+  33%{background-size:3px 95%,3px 35%,3px 80%}
+  66%{background-size:3px 55%,3px 100%,3px 25%}}
+
+/* automatic mode: the phase list walks through a round on its own */
+.motion .auto-steps li{opacity:.55;transition:opacity .35s,transform .45s var(--spring),background-color .35s,border-color .35s}
+.motion .auto-steps li.is-active{opacity:1;transform:translateX(8px);border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:color-mix(in srgb,var(--accent) 9%,var(--surface-raised))}
+.motion .auto-steps li.is-active .auto-phase{color:var(--accent)}
+.auto-phase{transition:color .3s}
+
+/* small touches */
+.brand-logo{transition:transform .4s var(--spring)}
+.brand:hover .brand-logo{transform:rotate(-8deg) scale(1.08)}
+.motion .not-found-orbit{animation:drift 7s ease-in-out infinite;cursor:pointer}
+@keyframes drift{0%,100%{transform:translateY(0) rotate(-5deg)}50%{transform:translateY(-14px) rotate(6deg)}}
+.motion mark{animation:mark-in .6s var(--ease-out)}
+@keyframes mark-in{from{background-size:0}}
+
+@media (hover:none){.voice-card{transform:none!important}}
+@media (prefers-reduced-motion:reduce){
+  *,*:before,*:after{animation:none!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+  .m,.wi{opacity:1!important;transform:none!important}
+  .scroll-progress{display:none}
+}

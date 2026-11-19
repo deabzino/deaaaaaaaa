@@ -4,7 +4,7 @@
   const fine = matchMedia("(hover: hover) and (pointer: fine)");
   const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
 
-  // Scroll progress bar and the nav shadow once the page moves. Works with reduced motion too.
+  // Scroll progress bar. Works with reduced motion too.
   const bar = document.createElement("div");
   bar.className = "scroll-progress";
   bar.setAttribute("aria-hidden", "true");
@@ -16,7 +16,6 @@
     requestAnimationFrame(() => {
       const max = document.documentElement.scrollHeight - innerHeight;
       bar.style.setProperty("--p", max > 0 ? Math.min(1, scrollY / max).toFixed(4) : 0);
-      document.querySelector(".site-nav")?.classList.toggle("is-stuck", scrollY > 8);
       ticking = false;
     });
   };
@@ -26,23 +25,34 @@
   if (reduced.matches) return;
   root.classList.add("motion");
 
-  // Headlines: every word rises out of its own mask, one after another.
-  $$(".hero-copy h1, .page-heading h1, .not-found h1").forEach((heading) => {
-    const text = heading.textContent.replace(/\s+/g, " ").trim();
-    heading.setAttribute("aria-label", text);
-    heading.textContent = "";
-    text.split(" ").forEach((word, index, words) => {
-      const mask = document.createElement("span");
-      mask.className = "w";
-      mask.setAttribute("aria-hidden", "true");
-      const inner = document.createElement("span");
-      inner.className = "wi";
-      inner.style.setProperty("--i", index);
-      inner.textContent = word;
-      mask.append(inner);
-      heading.append(mask);
-      if (index < words.length - 1) heading.append(" ");
+  // Headlines: every word rises out of its own mask. Line breaks and accent spans stay exactly as written.
+  const splitWords = (node, counter) => {
+    [...node.childNodes].forEach((child) => {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const frag = document.createDocumentFragment();
+        child.textContent.split(/(\s+)/).forEach((part) => {
+          if (!part) return;
+          if (/^\s+$/.test(part)) { frag.append(" "); return; }
+          const mask = document.createElement("span");
+          mask.className = "w";
+          mask.setAttribute("aria-hidden", "true");
+          const inner = document.createElement("span");
+          inner.className = "wi";
+          inner.style.setProperty("--i", counter.n++);
+          inner.textContent = part;
+          mask.append(inner);
+          frag.append(mask);
+        });
+        child.replaceWith(frag);
+      } else if (child.nodeType === Node.ELEMENT_NODE && child.tagName !== "BR") {
+        splitWords(child, counter);
+      }
     });
+  };
+  $$(".hero-copy h1, .page-heading h1, .not-found h1").forEach((heading) => {
+    const label = [...heading.childNodes].map((n) => n.tagName === "BR" ? " " : n.textContent).join("").replace(/\s+/g, " ").trim();
+    heading.setAttribute("aria-label", label);
+    splitWords(heading, { n: 0 });
     requestAnimationFrame(() => requestAnimationFrame(() => heading.classList.add("is-in")));
   });
 
@@ -50,7 +60,7 @@
   const kinds = [
     [".section-heading", "m-up"], [".feature-card", "m-pop"], [".auto-card", "m-pop"], [".demo-layout", "m-pop"],
     [".live-strip", "m-up"], [".final-cta", "m-pop"], [".status-card", "m-pop"], [".status-footnote", "m-up"],
-    [".changelog-tools", "m-up"], [".command-browser .search-wrap", "m-up"], [".connect-card", "m-pop"], [".ticker", "m-up"],
+    [".changelog-tools", "m-up"], [".command-browser .search-wrap", "m-up"], [".connect-card", "m-pop"],
   ];
   if ("IntersectionObserver" in window) {
     const seen = new IntersectionObserver((entries) => entries.forEach((entry) => {
@@ -59,7 +69,7 @@
       seen.unobserve(entry.target);
     }), { threshold: 0.12, rootMargin: "0px 0px -6% 0px" });
     kinds.forEach(([selector, kind]) => {
-      $$(selector).forEach((node, index) => {
+      $$(selector).forEach((node) => {
         const siblings = $$(selector, node.parentElement);
         node.style.setProperty("--d", Math.max(0, siblings.indexOf(node)) % 4);
         if (node.getBoundingClientRect().top < innerHeight * 0.9) return;
@@ -78,28 +88,6 @@
   };
   stagger(document.getElementById("command-grid"), ".command-card");
   stagger(document.getElementById("timeline"), ".timeline-entry");
-
-  // The nav underline slides to whatever you point at, and rests on the current page.
-  const links = document.querySelector(".desktop-links");
-  if (links) {
-    const ind = document.createElement("span");
-    ind.className = "nav-ind";
-    links.append(ind);
-    const to = (link) => {
-      if (!link) { ind.style.setProperty("--o", 0); return; }
-      ind.style.setProperty("--x", `${link.offsetLeft}px`);
-      ind.style.setProperty("--w", `${link.offsetWidth}px`);
-      ind.style.setProperty("--o", 1);
-    };
-    const rest = () => to(links.querySelector('a[aria-current="page"]'));
-    links.addEventListener("pointerover", (event) => { const a = event.target.closest("a"); if (a) to(a); });
-    links.addEventListener("pointerleave", rest);
-    links.addEventListener("focusin", (event) => to(event.target.closest("a")));
-    links.addEventListener("focusout", rest);
-    addEventListener("resize", rest);
-    document.fonts?.ready.then(rest);
-    rest();
-  }
 
   // Buttons lean toward the pointer, and the voice card tilts a few degrees.
   if (fine.matches) {
