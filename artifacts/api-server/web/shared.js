@@ -32,7 +32,7 @@
   const color = () => {
     const light = root.dataset.theme === "light";
     document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
-      meta.content = light ? "#f4f5f1" : "#090d13";
+      meta.content = light ? "#e9edf7" : "#0f1324";
       meta.removeAttribute("media");
     });
     root.style.colorScheme = light ? "light" : "dark";

@@ -43,7 +43,7 @@ try {
 
   for (const route of ["/", "/commands", "/changelog", "/status", "/404.html"]) {
     const html = await (await fetch(`${base}${route}`)).text();
-    assert.ok(html.indexOf('id="theme-bootstrap"') < html.indexOf('href="/site.css?v=9"'), `${route} applies theme before CSS`);
+    assert.ok(html.indexOf('id="theme-bootstrap"') < html.search(/href="\/site\.css\?v=\d+"/), `${route} applies theme before CSS`);
   }
 
   for (const [route, title] of [["/", "dea"], ["/commands", "Commands"], ["/changelog", "Changelog"], ["/status", "System status"]]) {
@@ -93,7 +93,8 @@ try {
   assert.equal(await themePage.evaluate(() => window.__themeAtFirstFrame), "light", "saved theme should be applied before the first rendered frame");
   assert.equal(await themePage.locator("html").getAttribute("data-theme"), "light");
   await themePage.waitForFunction(() => document.querySelector("#hero-command-count")?.textContent.match(/^\d+ commands · slash and prefix$/));
-  assert.equal(await themePage.locator("#hero-command-count").textContent(), "12 commands · slash and prefix");
+  const publicCommands = (await (await fetch(`${base}/api/commands`)).json()).filter((command) => command.hiddenFromWebsite !== true).length;
+  assert.equal(await themePage.locator("#hero-command-count").textContent(), `${publicCommands} commands · slash and prefix`);
   assert.equal(await themePage.locator(".mini-avatars").count(), 0);
   assert.equal(await themePage.locator(".voice-card").count(), 1, "hero voice channel card should render");
   await themePage.waitForFunction(() => { const img = document.querySelector(".voice-bot-avatar img"); return img?.complete && img.naturalWidth > 0; });
@@ -131,7 +132,7 @@ try {
   const ctaAt390 = await phonePage.locator(".final-cta").evaluate((box) => {
     const card = box.getBoundingClientRect();
     const content = [...box.querySelectorAll(".eyebrow, h2, p, .button")].map((node) => node.getBoundingClientRect());
-    return { contained: content.every((item) => item.left >= card.left && item.right <= card.right), gap: content[3].top - content[2].bottom };
+    return { contained: content.every((item) => item.left >= card.left && item.right <= card.right), gap: content.at(-1).top - content.at(-2).bottom };
   });
   assert.equal(ctaAt390.contained, true, "CTA copy and button should fit inside the card at 390px");
   assert.ok(ctaAt390.gap >= 10, "CTA button should have comfortable spacing at 390px");
@@ -148,16 +149,14 @@ try {
   const desktopCta = await themePage.locator(".final-cta").evaluate((box) => {
     const card = box.getBoundingClientRect();
     const content = [...box.querySelectorAll(".eyebrow, h2, p, .button")].map((node) => node.getBoundingClientRect());
-    return { contained: content.every((item) => item.left >= card.left && item.right <= card.right), gap: content[3].top - content[2].bottom, glow: getComputedStyle(box).backgroundImage.includes("radial-gradient") };
+    return { contained: content.every((item) => item.left >= card.left && item.right <= card.right), gap: content.at(-1).top - content.at(-2).bottom };
   });
   assert.equal(desktopCta.contained, true, "CTA copy and button should fit inside the card on desktop");
   assert.ok(desktopCta.gap >= 10, "CTA button should have comfortable spacing below the copy");
-  assert.equal(desktopCta.glow, true, "CTA should retain its soft gradient glow");
   await themePage.locator(".theme-toggle").click();
   await themePage.waitForFunction(() => document.documentElement.dataset.theme === "dark");
   await themePage.reload();
   assert.equal(await themePage.locator("html").getAttribute("data-theme"), "dark");
-  assert.ok(await themePage.locator(".final-cta").evaluate((box) => getComputedStyle(box).backgroundImage.includes("radial-gradient")), "CTA glow should remain in dark mode");
   await themePage.close();
 
   const commandPage = await browser.newPage({ viewport: { width: 1440, height: 900 }, permissions: ["clipboard-read", "clipboard-write"] });
@@ -165,7 +164,8 @@ try {
   listenConsole(commandPage, "commands");
   await commandPage.goto(`${base}/commands`, { waitUntil: "networkidle" });
   await commandPage.waitForFunction(() => document.querySelectorAll(".command-card").length > 0);
-  assert.equal(await commandPage.locator(".command-card").count(), 12);
+  const commandTotal = (await (await fetch(`${base}/api/commands`)).json()).filter((command) => command.hiddenFromWebsite !== true).length;
+  assert.equal(await commandPage.locator(".command-card").count(), commandTotal);
   assert.ok(await commandPage.locator(".command-symbol svg").count() > 0);
   assert.ok(await commandPage.locator(".command-symbol svg").evaluateAll((icons) => new Set(icons.map((icon) => icon.querySelector("path")?.getAttribute("d"))).size >= 3), "each command category should have its own icon");
   const desktopPills = commandPage.locator(".category-scroll-wrap");
@@ -268,11 +268,10 @@ try {
   const phoneCta = await phone.locator(".final-cta").evaluate((box) => {
     const card = box.getBoundingClientRect();
     const content = [...box.querySelectorAll(".eyebrow, h2, p, .button")].map((node) => node.getBoundingClientRect());
-    return { contained: content.every((item) => item.left >= card.left && item.right <= card.right), gap: content[3].top - content[2].bottom, glow: getComputedStyle(box).backgroundImage.includes("radial-gradient") };
+    return { contained: content.every((item) => item.left >= card.left && item.right <= card.right), gap: content.at(-1).top - content.at(-2).bottom };
   });
   assert.equal(phoneCta.contained, true, "CTA copy and button should fit inside the card at phone width");
   assert.ok(phoneCta.gap >= 10, "phone CTA button should have comfortable spacing below the copy");
-  assert.equal(phoneCta.glow, true, "CTA should retain its soft gradient glow on phones");
   await phone.locator('[data-demo="lobby"]').click();
   await phone.waitForFunction(() => document.querySelector("#chat-messages")?.textContent.includes(".code ABCDEF"), { timeout: 6000 });
   await phone.close();

@@ -8,12 +8,12 @@
     />
     <meta
       name="theme-color"
-      content="#090d13"
+      content="#0f1324"
       media="(prefers-color-scheme: dark)"
     />
     <meta
       name="theme-color"
-      content="#f4f5f1"
+      content="#e9edf7"
       media="(prefers-color-scheme: light)"
     />
     <meta
@@ -88,15 +88,17 @@
         } catch (e) {}
       })();
     </script>
-    <link rel="stylesheet" href="/site.css?v=9" />
+    <link rel="preload" href="/fonts/gabarito-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/instrument-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/site.css?v=10" />
+    <link rel="stylesheet" href="/polish.css?v=1" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
     <div data-shared-nav></div>
     <main id="main" class="shell page-main">
       <header class="page-heading">
-        <span class="eyebrow">YOUR ROUND, YOUR WAY</span>
-        <h1>Command <span>deck.</span></h1>
+        <h1>Command deck.</h1>
         <p>
           Quick tools for smoother Among Us rounds and a more organized server. Manual controls run when you use them, and automatic mode follows the game for you.
         </p>
@@ -162,7 +164,8 @@
       </section>
     </main>
     <div data-shared-footer></div>
-    <script src="/shared.js?v=4" defer></script>
+    <script src="/shared.js?v=5" defer></script>
+    <script src="/motion.js?v=1" defer></script>
     <script src="/commands.js?v=2" defer></script>
   </body>
 </html>

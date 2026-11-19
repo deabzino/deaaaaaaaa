@@ -52,7 +52,7 @@ test("production preview serves direct pages and safe public data", async () => 
     assert.equal(response.headers.get("x-robots-tag"), "noindex", `${route} should be excluded from indexing`);
     const body = await response.text();
     assert.match(body, /name="robots" content="noindex"/);
-    assert.match(body, /site\.css\?v=6/);
+    assert.match(body, /site\.css\?v=\d+/);
     assert.match(body, /og:image/);
     assert.match(body, /twitter:card.*summary_large_image/);
     assert.doesNotMatch(body, /__SITE_URL__/);
