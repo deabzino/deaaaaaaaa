@@ -1,4 +1,5 @@
 [
+  {"date":"2026-11-19T15:03:23.000Z","title":"More updates for your server","changes":[{"type":"Added","text":"New Discord features help your server stay organized."},{"type":"Added","text":"New details make the dea website more useful for your server."}]},
   {"date":"2026-11-19T12:54:56.000Z","title":"More updates for your server","changes":[{"type":"Added","text":"Automatic mode can follow your game and handle voice mutes for you."},{"type":"Added","text":"New service details help keep your server in the loop."},{"type":"Added","text":"New details make the dea website more useful for your server."}]},
   {"date":"2026-11-18T18:41:14.000Z","title":"More updates for your server","changes":[{"type":"Fixed","text":"dea's Discord features work more reliably."},{"type":"Fixed","text":"The dea website works more smoothly and reliably."}]},
   {"date":"2026-11-18T18:35:04.000Z","title":"More updates for your server","changes":[{"type":"Improved","text":"Discord commands are clearer and easier to use."},{"type":"Improved","text":"dea's Discord features are easier to use."},{"type":"Improved","text":"The dea website is clearer and easier to browse."}]},
