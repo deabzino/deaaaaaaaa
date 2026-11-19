@@ -42,7 +42,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api", router);
 
 const webDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "web");
-const sitePages: Record<string, string> = { "/": "index.html", "/commands": "commands.html", "/changelog": "changelog.html", "/status": "status.html", "/404": "404.html" };
+const sitePages: Record<string, string> = { "/": "index.html", "/commands": "commands.html", "/connect": "connect.html", "/changelog": "changelog.html", "/status": "status.html", "/404": "404.html" };
 app.get(Object.keys(sitePages), (req, res) => {
   const file = sitePages[req.path] ?? "404.html";
   const siteUrl = (process.env.SITE_URL ?? "https://dea-5e46.onrender.com").replace(/\/$/, "");

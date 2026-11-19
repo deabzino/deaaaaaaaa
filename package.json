@@ -6,7 +6,7 @@
     "dev": "npm --workspace @workspace/api-server run dev",
     "build": "npm --workspace @workspace/api-server run build",
     "typecheck": "npm --workspace @workspace/api-server run typecheck",
-    "test": "npm run build && node --disable-warning=ExperimentalWarning --experimental-strip-types --test artifacts/api-server/src/discord/serverLogger.test.mjs artifacts/api-server/src/discord/website-api.test.mjs artifacts/api-server/src/among-us/capture.test.mjs && node scripts/website-check.mjs",
+    "test": "npm run build && node --disable-warning=ExperimentalWarning --experimental-strip-types --test artifacts/api-server/src/discord/serverLogger.test.mjs artifacts/api-server/src/discord/website-api.test.mjs artifacts/api-server/src/among-us/capture.test.mjs artifacts/api-server/src/among-us/connect-page.test.mjs && node scripts/website-check.mjs",
     "generate:icons": "node scripts/generate-icons.mjs",
     "check:website": "node scripts/website-check.mjs"
   },

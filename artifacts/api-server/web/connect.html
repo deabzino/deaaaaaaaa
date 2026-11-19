@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta
+      name="theme-color"
+      content="#090d13"
+      media="(prefers-color-scheme: dark)"
+    />
+    <meta
+      name="theme-color"
+      content="#f4f5f1"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="description"
+      content="Pair the dea capture app with your Discord server for automatic Among Us muting."
+    />
+    <meta name="robots" content="noindex" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="canonical" href="__SITE_URL__/connect" />
+    <meta property="og:title" content="Connect — dea" />
+    <meta
+      property="og:description"
+      content="Pair the dea capture app with your Discord server for automatic Among Us muting."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="__SITE_URL__/connect" />
+    <meta property="og:image" content="__SITE_URL__/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Connect — dea" />
+    <meta
+      name="twitter:description"
+      content="Pair the dea capture app with your Discord server for automatic Among Us muting."
+    />
+    <meta name="twitter:image" content="__SITE_URL__/og-image.png" />
+    <title>Connect — dea</title>
+    <link rel="icon" href="/favicon.svg?v=4" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico?v=4" sizes="any" />
+    <link
+      rel="icon"
+      href="/favicon-16x16.png?v=4"
+      sizes="16x16"
+      type="image/png"
+    />
+    <link
+      rel="icon"
+      href="/favicon-32x32.png?v=4"
+      sizes="32x32"
+      type="image/png"
+    />
+    <link rel="icon" href="/favicon-48x48.png?v=4" sizes="48x48" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=4" />
+    <link
+      rel="icon"
+      href="/icon-192.png?v=4"
+      sizes="192x192"
+      type="image/png"
+    />
+    <link
+      rel="icon"
+      href="/icon-512.png?v=4"
+      sizes="512x512"
+      type="image/png"
+    />
+    <link
+      rel="icon"
+      href="/icon-512-maskable.png?v=4"
+      sizes="512x512"
+      type="image/png"
+    />
+    <link rel="manifest" href="/site.webmanifest?v=4" />
+    <script id="theme-bootstrap">
+      (function () {
+        try {
+          var t = localStorage.getItem("dea-theme");
+          if (t === "light" || t === "dark")
+            document.documentElement.dataset.theme = t;
+          else
+            document.documentElement.dataset.theme = matchMedia(
+              "(prefers-color-scheme: light)",
+            ).matches
+              ? "light"
+              : "dark";
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="stylesheet" href="/site.css?v=9" />
+    <link rel="stylesheet" href="/connect.css?v=1" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div data-shared-nav></div>
+    <main id="main" class="shell page-main">
+      <header class="page-heading">
+        <span class="eyebrow">AUTOMATIC MODE</span>
+        <h1>Connect <span>capture.</span></h1>
+        <p>
+          Paste the pairing code from Discord and dea starts following your game. Run <code>/capture pair</code> in Discord to get a code.
+        </p>
+      </header>
+      <section class="connect-card" aria-labelledby="connect-title">
+        <div class="connect-app" id="app-status" data-app="detecting" aria-live="polite">
+          <span class="connect-dot" aria-hidden="true"></span>
+          <span id="app-status-text">Looking for the capture app on this computer…</span>
+        </div>
+        <form id="connect-form" novalidate autocomplete="off">
+          <h2 id="connect-title">Pairing code</h2>
+          <label class="sr-only" for="code">Pairing code from Discord</label>
+          <input id="code" name="code" type="text" inputmode="text" maxlength="14" spellcheck="false"
+            autocapitalize="characters" autocomplete="off" placeholder="ABCDE FGHJK" aria-describedby="code-help" />
+          <p id="code-help" class="connect-help">10 letters and numbers. A code works once and expires after five minutes.</p>
+          <button class="button primary" id="connect-button" type="submit" disabled>Connect</button>
+        </form>
+        <div id="connect-result" class="notice" role="status" aria-live="polite" hidden></div>
+        <details class="connect-steps" id="app-help">
+          <summary>Capture app not found?</summary>
+          <ol>
+            <li>Run the dea capture app on the Windows PC that plays Among Us, in listen mode: <code>Dea.Capture --listen</code></li>
+            <li>Leave it open. This page finds it by itself.</li>
+            <li>If your browser asks to allow access to other apps or devices on this computer, allow it. The page only talks to the capture app on this computer.</li>
+            <li>Safari blocks this page from reaching the app. Use Chrome, Edge or Firefox, or type the code into the capture app instead.</li>
+          </ol>
+        </details>
+      </section>
+    </main>
+    <div data-shared-footer></div>
+    <script src="/shared.js?v=4" defer></script>
+    <script src="/connect.js?v=1" defer></script>
+  </body>
+</html>

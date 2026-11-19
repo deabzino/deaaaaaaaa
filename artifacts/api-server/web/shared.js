@@ -17,6 +17,7 @@
   const links = [
     ["Features", "/#features", path === "/"],
     ["Commands", "/commands", path === "/commands"],
+    ["Connect", "/connect", path === "/connect"],
     ["Changelog", "/changelog", path === "/changelog"],
     ["Bot status", "/status", path === "/status"],
   ];

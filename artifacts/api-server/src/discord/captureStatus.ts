@@ -101,7 +101,8 @@ export async function handleCaptureCommand(interaction: ChatInputCommandInteract
     }
   });
   await interaction.editReply(
-    `Enter **${code}** in the capture app with server **${baseUrl}**. This code can be used once and expires in five minutes.`,
+    `Open <${baseUrl}/connect#code=${code}> and press Connect, with the capture app running on your PC (\`Dea.Capture --listen\`). ` +
+      `You can also enter **${code}** in the capture app with server **${baseUrl}**. This code can be used once and expires in five minutes.`,
   );
 }
 
