@@ -294,6 +294,9 @@ export async function enqueue(guild: Guild, category: LogCategory, item: EmbedBu
   }).catch((error) => console.error("Failed to queue server log", error));
 }
 
+// guildId:channelId pairs that can never receive logs (channel is in another server or gone).
+const unusableDestinations = new Set<string>();
+
 async function drain(): Promise<void> {
   if (draining) return;
   draining = true;
@@ -305,7 +308,22 @@ async function drain(): Promise<void> {
       for (const [guildId, items] of grouped) {
         try {
           const channelId = logChannelId(await getSettings(guildId));
-          const channel = await globalClient?.guilds.cache.get(guildId)?.channels.fetch(channelId);
+          const destination = `${guildId}:${channelId}`;
+          if (unusableDestinations.has(destination)) continue;
+          let channel;
+          try {
+            channel = await globalClient?.guilds.cache.get(guildId)?.channels.fetch(channelId);
+          } catch (error) {
+            // The fallback channel belongs to another server, or the channel was deleted.
+            // Remember it so this does not repeat for every log event.
+            const code = (error as { code?: string | number } | null)?.code;
+            if (code === "GuildChannelUnowned" || code === 10003 || code === 50001) {
+              unusableDestinations.add(destination);
+              console.warn(`Server logs are off for guild ${guildId}: channel ${channelId} is not usable there. Use /logs to choose a log channel.`);
+              continue;
+            }
+            throw error;
+          }
           if (!channel?.isSendable() || channel.guildId !== guildId) continue;
           let batch: QueueItem[] = [];
           let length = 0;
