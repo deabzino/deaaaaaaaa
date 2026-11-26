@@ -126,6 +126,38 @@ async function saveGuildState(guildId: string): Promise<boolean> {
   }
 }
 
+// This bot only registers commands per server. Anything registered globally is
+// left over from an older version (or a duplicate of a server command), so it is
+// removed to keep the "/" menu limited to the commands listed above.
+async function removeGlobalSlashCommands(readyClient: Client<true>): Promise<void> {
+  try {
+    const existing = await readyClient.application.commands.fetch();
+    if (existing.size === 0) return;
+    await readyClient.application.commands.set([]);
+    logger.info(
+      { removed: existing.map((command) => command.name) },
+      "Removed global slash commands that this bot does not use",
+    );
+  } catch (error) {
+    logger.error({ err: error }, "Could not clean up global slash commands");
+  }
+}
+
+async function syncGuildSlashCommands(guild: Guild): Promise<void> {
+  try {
+    const wanted = new Set(slashCommands.map((command) => command.name));
+    const before = await guild.commands.fetch();
+    const stale = before.filter((command) => !wanted.has(command.name)).map((command) => command.name);
+    await guild.commands.set(slashCommands);
+    logger.info(
+      { guildId: guild.id, commands: slashCommands.length, removed: stale },
+      "Discord slash commands registered",
+    );
+  } catch (error) {
+    logger.error({ err: error, guildId: guild.id }, "Discord slash command registration failed");
+  }
+}
+
 export async function loadPersistedGuildState(): Promise<void> {
   try {
     const rows = await prisma.$queryRaw<Array<{ guildId: string; lobbyCode: string | null; deadMemberIds: string }>>`
@@ -1461,19 +1493,13 @@ export function startDiscordBot(): Client | null {
       },
       "Discord bot ready",
     );
-    void Promise.all(
-      readyClient.guilds.cache.map(async (guild) => {
-        try {
-          await guild.commands.set(slashCommands);
-          logger.info({ guildId: guild.id }, "Discord slash commands registered");
-        } catch (error) {
-          logger.error(
-            { err: error, guildId: guild.id },
-            "Discord slash command registration failed",
-          );
-        }
-      }),
-    );
+    void (async () => {
+      await removeGlobalSlashCommands(readyClient);
+      await Promise.all(readyClient.guilds.cache.map((guild) => syncGuildSlashCommands(guild)));
+    })();
+  });
+  client.on(Events.GuildCreate, (guild) => {
+    void syncGuildSlashCommands(guild);
   });
   client.on(Events.InteractionCreate, async (interaction) => {
     try {
